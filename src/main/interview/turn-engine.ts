@@ -28,6 +28,7 @@ import type {
   AnswerCancelled,
   AnswerDone,
   AnswerError,
+  AnswerNudge,
   DetectedQuestion,
   SessionConfig,
   Speaker,
@@ -382,7 +383,12 @@ export class TurnEngine {
     void this.generate(questionId, trimmed, trace, false)
   }
 
-  regenerate(): void {
+  /**
+   * Re-answer the last question, optionally with a live register shift
+   * ("simpler"/"deeper") — the mid-interview escape hatch for an answer that
+   * came out pitched wrong.
+   */
+  regenerate(nudge?: AnswerNudge): void {
     if (!this.lastQuestion) return
     const { text } = this.lastQuestion
     this.cancelActive('superseded')
@@ -396,18 +402,19 @@ export class TurnEngine {
       id: questionId,
       text,
       confidence: 'high',
-      reason: 'regenerate',
+      reason: nudge ? `regenerate-${nudge}` : 'regenerate',
       speculative: false,
       at: Date.now(),
     })
-    void this.generate(questionId, text, trace, false)
+    void this.generate(questionId, text, trace, false, nudge)
   }
 
   private async generate(
     questionId: string,
     questionText: string,
     trace: TraceRecorder,
-    speculative: boolean
+    speculative: boolean,
+    nudge?: AnswerNudge
   ): Promise<void> {
     const controller = new AbortController()
     const generation: ActiveGeneration = {
@@ -423,7 +430,7 @@ export class TurnEngine {
     }
     this.active = generation
 
-    const messages = this.deps.context.buildMessages(questionText, this.deps.config)
+    const messages = this.deps.context.buildMessages(questionText, this.deps.config, nudge)
     const maxTokens = this.deps.config.answerLength === 'detailed' ? 420 : 260
 
     trace.mark('llmRequest')
@@ -464,7 +471,9 @@ export class TurnEngine {
         messages,
         model: this.deps.answerModel,
         maxTokens,
-        temperature: 0.5,
+        // Grounded mode is a constraint-following task, and adherence improves
+        // at lower sampling entropy; the voice survives fine at 0.35.
+        temperature: this.deps.config.grounded ? 0.35 : 0.5,
         signal: controller.signal,
       })) {
         // Ownership check: a cancellation may have landed between chunks.

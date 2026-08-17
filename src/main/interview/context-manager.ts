@@ -17,6 +17,8 @@
 import { createLogger } from '@main/core/logger'
 import type { LLMMessage, LLMProvider } from '@main/contracts/llm'
 import type {
+  AnswerComplexity,
+  AnswerNudge,
   CandidateProfile,
   InterviewMode,
   SessionConfig,
@@ -42,6 +44,76 @@ const LENGTH_RULES: Record<SessionConfig['answerLength'], string> = {
   brief: 'Keep it to 25-45 words. One tight paragraph.',
   normal: 'Keep it to 45-90 words. One paragraph, maybe two short ones.',
   detailed: 'Keep it to 90-160 words. Two short paragraphs at most.',
+}
+
+/**
+ * Vocabulary/depth register. This is a *credibility* control, not a quality
+ * dial: an answer pitched above the candidate's level reads as coached the
+ * moment the interviewer asks "can you expand on that?".
+ */
+const COMPLEXITY_RULES: Record<AnswerComplexity, string> = {
+  simple:
+    'Use plain language and short sentences. No jargon or tool names the question itself did not use. ' +
+    'Explain like a capable practitioner talking to a colleague, not an architect giving a talk. ' +
+    'Prefer concrete, everyday examples over abstractions.',
+  balanced:
+    'Use clear, working-engineer language: technical terms where they earn their place, plain words everywhere else.',
+  advanced:
+    'Use precise technical vocabulary, name specific mechanisms and tradeoffs, and quantify where possible. ' +
+    'Speak with the voice of a senior engineer who has shipped and maintained real systems.',
+}
+
+/**
+ * The knowledge boundary. Injected only when grounding is on and the profile
+ * has substance. Every rule serves one goal: the candidate must be able to
+ * defend every word of the answer in a follow-up.
+ *
+ * The toolkit is spelled out verbatim rather than referenced ("the profile")
+ * because live testing showed a small model treating the reference loosely: a
+ * fresher profile of "HTML, CSS, basic JavaScript" still got Redis and sharded
+ * clusters in its answer. An explicit list survives low reasoning effort.
+ */
+function groundingRules(profile: CandidateProfile): string {
+  const stack = profile.skills.trim().replace(/\s+/g, ' ')
+  return [
+    'Staying credible — the candidate must be able to defend every word in follow-up questions:',
+    stack
+      ? `- The candidate's entire toolkit is: ${stack}. Treat every technology NOT in that list as something they have never used.`
+      : '- Only claim hands-on experience the profile supports.',
+    '- Never name a technology outside that toolkit unless the interviewer named it first — not even as a passing suggestion ("something like Redis").',
+    '- Draw examples from the candidate’s own projects and work history; never invent employers, tools, or outcomes.',
+    '- If the question is beyond their toolkit, do not bluff and do not recite an expert answer. Sound like a bright candidate reasoning out loud: admit limited hands-on exposure in one clause, state the core concept in one plain sentence, then work the problem using only things they actually know.',
+  ].join('\n')
+}
+
+const NUDGE_RULES: Record<AnswerNudge, string> = {
+  simpler:
+    'Rewrite guidance: the previous answer was pitched too high. Use plainer words, shorter sentences, and drop any jargon the question itself did not use. Same question, humbler register.',
+  deeper:
+    'Rewrite guidance: add one more layer of concrete technical depth — a specific mechanism, tradeoff, or number — while staying within the same length limits.',
+}
+
+/**
+ * One sentence that sets the *voice* to match the candidate's seniority, so a
+ * fresher doesn't sound like a staff engineer and vice versa. Local and cheap.
+ */
+export function experienceFraming(profile: CandidateProfile): string {
+  const haystack = `${profile.yearsExperience} ${profile.education} ${profile.role}`.toLowerCase()
+  const years = Number.parseFloat(profile.yearsExperience.match(/\d+(\.\d+)?/)?.[0] ?? '')
+  const fresher =
+    /\b(fresher|student|intern|graduate|pursuing|final year|undergrad)\b/.test(haystack) ||
+    (!Number.isNaN(years) && years <= 1)
+
+  if (fresher) {
+    return (
+      'Voice: early-career. Sound enthusiastic and honest about limited production experience; ' +
+      'lean on personal projects and coursework rather than claiming professional depth.'
+    )
+  }
+  if (!Number.isNaN(years) && years >= 6) {
+    return 'Voice: experienced. Calm confidence of someone who has shipped and maintained real systems.'
+  }
+  return ''
 }
 
 const MODE_GUIDANCE: Record<InterviewMode, string> = {
@@ -122,8 +194,21 @@ export class ContextManager {
     return this.turns.slice(-VERBATIM_TURNS)
   }
 
-  buildMessages(question: string, config: SessionConfig): LLMMessage[] {
+  /**
+   * True when the profile carries enough substance for grounding to constrain
+   * anything. A name alone gives the knowledge boundary nothing to enforce.
+   */
+  hasGroundableContent(): boolean {
+    const p = this.profile
+    if (!p) return false
+    return Boolean(
+      p.skills.trim() || p.projects.trim() || p.workExperience.trim() || p.resume.trim()
+    )
+  }
+
+  buildMessages(question: string, config: SessionConfig, nudge?: AnswerNudge): LLMMessage[] {
     const messages: LLMMessage[] = []
+    const grounded = config.grounded && this.hasGroundableContent()
 
     // --- Stable block: identical for the whole session, so it is cacheable ---
     const system = [
@@ -134,9 +219,17 @@ export class ContextManager {
       '- No preamble. Never start with "Great question", "Certainly", "Sure", or by restating the question.',
       '- No markdown headings, no bold, no bullet characters unless you are listing concrete steps.',
       `- ${LENGTH_RULES[config.answerLength]}`,
-      '- Never invent specific employers, dates, metrics, or product names that are not in the candidate profile. If the profile is thin, answer from general expertise in a way that stays true for this candidate.',
+      `- ${COMPLEXITY_RULES[config.complexity]}`,
+      // Applies in every mode, grounded or not. Live testing showed that a
+      // blanket "don't fabricate" loses whack-a-mole: the model reworded the
+      // invented experience three different ways across three runs ("my last
+      // project" → "in production we" → "in a recent project we sharded…").
+      // A *grammatical* rule converges where a phrase blacklist does not:
+      // future/conditional is always safe, past tense requires profile backing.
+      '- Tense rule for experience: describe what you WOULD do ("I\'d build…", "my approach would be…"), never what you claim to HAVE done, unless that past experience is explicitly in the candidate profile. No invented past systems, employers, teams, or metrics — general knowledge is stated as general ("a common approach is…"), not as autobiography.',
       '- If the question is ambiguous, answer the most likely reading. Never ask for clarification.',
       '- Do not mention that you are an AI or that the candidate is being assisted.',
+      ...(grounded && this.profile ? ['', groundingRules(this.profile)] : []),
       '',
       `Interview mode: ${config.mode}. ${MODE_GUIDANCE[config.mode]}`,
     ].join('\n')
@@ -144,9 +237,11 @@ export class ContextManager {
     messages.push({ role: 'system', content: system, cacheable: true })
 
     if (this.profileCard) {
+      const framing = this.profile ? experienceFraming(this.profile) : ''
       messages.push({
         role: 'system',
-        content: `Candidate profile:\n${this.profileCard}`,
+        content:
+          `Candidate profile:\n${this.profileCard}` + (framing ? `\n\n${framing}` : ''),
         cacheable: true,
       })
     }
@@ -168,6 +263,27 @@ export class ContextManager {
         role: 'system',
         content: `Recent exchange (do not contradict anything the candidate already said):\n${lines}`,
       })
+    }
+
+    // One-line restatement of the hard constraints, placed adjacent to the
+    // question: small models weight recent tokens heavily, and live testing
+    // showed rules buried five blocks up being obeyed only stochastically.
+    // Costs ~25 tokens on the already-uncached tail of the prompt.
+    const checks: string[] = []
+    if (grounded) {
+      const stack = this.profile?.skills.trim().replace(/\s+/g, ' ')
+      checks.push(`stay strictly inside the toolkit${stack ? ` (${stack})` : ''} — name nothing outside it`)
+    }
+    checks.push(
+      'past-tense experience claims only where the profile backs them, otherwise conditional ("I\'d…")'
+    )
+    messages.push({ role: 'system', content: `Final check before answering: ${checks.join('; ')}.` })
+
+    // Live rewrite request ("simpler"/"deeper"). Volatile by design — it applies
+    // to exactly one regeneration. The previous answer is already visible to the
+    // model via the recent-exchange block above.
+    if (nudge) {
+      messages.push({ role: 'system', content: NUDGE_RULES[nudge] })
     }
 
     messages.push({ role: 'user', content: question })
@@ -267,8 +383,10 @@ export function buildProfileCard(profile: CandidateProfile): string {
   add('Name', profile.name, 80)
   add('Role', profile.role, 120)
   add('Experience', profile.yearsExperience, 60)
+  add('Education', profile.education, 200)
   add('Skills', profile.skills, 400)
   add('Projects', profile.projects, 700)
+  add('Work experience', profile.workExperience, 700)
   add('Target company', profile.company, 120)
   add('Job description', profile.jobDescription, 900)
   add('Notes', profile.notes, 400)

@@ -11,12 +11,16 @@ import { INVOKE, PUSH, SEND } from '@shared/ipc'
 import type { ShortcutAction, ToastPayload } from '@shared/ipc'
 import { credentialStatus, setCredentials } from '@main/config/credentials'
 import { getSettings, updateSettings } from '@main/config/settings'
+import { loadProfile, saveProfile } from '@main/config/profile-store'
 import { applyUiSettings, hideOverlay } from '@main/windows/overlay'
 import { refreshMenu } from '@main/windows/tray'
-import { InterviewSession } from '@main/interview/session'
+import { InterviewSession, SUMMARY_MODELS } from '@main/interview/session'
+import { parseResume } from '@main/interview/resume-parser'
+import { getLlmProvider } from '@main/providers/factory'
 import { toWallClock } from '@main/core/trace'
 import {
   EMPTY_PROFILE,
+  type AnswerNudge,
   type AppSettings,
   type CandidateProfile,
   type SessionConfig,
@@ -26,7 +30,11 @@ import {
 
 const log = createLogger('ipc')
 
-/** Kept in memory only — a resume is sensitive and does not belong on disk. */
+/**
+ * The working copy. Backed by the encrypted on-disk store (DPAPI), loaded once
+ * at registration; every change writes through. Clearing the profile in the UI
+ * empties it, which deletes the file.
+ */
 let profile: CandidateProfile = { ...EMPTY_PROFILE }
 const traces: TurnTrace[] = []
 
@@ -100,17 +108,43 @@ export function registerIpc(getWindow: () => BrowserWindow | null): InterviewSes
   })
 
   // --- Profile --------------------------------------------------------------
+  profile = loadProfile()
+  if (Object.values(profile).some((v) => String(v).trim())) {
+    session.setProfile(profile)
+  }
+
   ipcMain.handle(INVOKE.profileGet, async () => profile)
 
   ipcMain.handle(INVOKE.profileSet, async (_event, next: CandidateProfile) => {
     profile = { ...EMPTY_PROFILE, ...next }
     session.setProfile(profile)
+    // Write-through: an emptied profile deletes the file (that is how Clear works).
+    saveProfile(profile)
     log.info('profile set', {
       fields: Object.entries(profile)
         .filter(([, v]) => Boolean(v))
         .map(([k]) => k),
     })
     return { ok: true }
+  })
+
+  ipcMain.handle(INVOKE.profileAutofill, async (_event, payload: { resume: string }) => {
+    const resume = payload?.resume?.trim()
+    if (!resume) return { ok: false, error: 'Paste your resume text first.' }
+    try {
+      const settings = getSettings()
+      const llm = getLlmProvider(settings.providers.llmProvider)
+      llm.validate()
+      const model = SUMMARY_MODELS[llm.name] ?? settings.providers.llmModel
+      const fields = await parseResume(resume, llm, model)
+      if (Object.keys(fields).length === 0) {
+        return { ok: false, error: 'Could not extract anything usable from that text.' }
+      }
+      return { ok: true, fields }
+    } catch (err) {
+      log.warn('resume autofill failed', err)
+      return { ok: false, error: (err as Error).message }
+    }
   })
 
   // --- Settings -------------------------------------------------------------
@@ -153,10 +187,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): InterviewSes
     return { ok: Boolean(session.turnEngine) }
   })
 
-  ipcMain.handle(INVOKE.answerRegenerate, async () => {
-    session.turnEngine?.regenerate()
-    return { ok: Boolean(session.turnEngine) }
-  })
+  ipcMain.handle(
+    INVOKE.answerRegenerate,
+    async (_event, payload?: { nudge?: AnswerNudge }) => {
+      session.turnEngine?.regenerate(payload?.nudge)
+      return { ok: Boolean(session.turnEngine) }
+    }
+  )
 
   ipcMain.handle(INVOKE.answerCancel, async () => {
     session.turnEngine?.cancelActive('user')
@@ -197,7 +234,11 @@ export function pushToast(window: BrowserWindow | null, payload: ToastPayload): 
   if (window && !window.isDestroyed()) window.webContents.send(PUSH.toast, payload)
 }
 
-/** Wiped on session end so a resume never outlives the interview. */
+/**
+ * Wipes per-run state on quit. The in-memory profile goes with the process
+ * anyway; the encrypted on-disk copy intentionally survives — the user opted
+ * into persistence, and Clear in the UI is what deletes it.
+ */
 export function clearSensitiveState(): void {
   profile = { ...EMPTY_PROFILE }
   traces.length = 0

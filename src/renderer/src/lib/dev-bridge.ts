@@ -35,7 +35,13 @@ const DEMO_SETTINGS: AppSettings = {
     showTranscript: true,
     showLatency: true,
   },
-  session: { mode: 'general', answerLength: 'normal', speculative: true },
+  session: {
+    mode: 'general',
+    answerLength: 'normal',
+    speculative: true,
+    grounded: true,
+    complexity: 'balanced',
+  },
 }
 
 type Handler = (payload: unknown) => void
@@ -163,6 +169,14 @@ export function installDevBridge(): void {
       profile = next
       return { ok: true }
     },
+    autofillProfile: async () => ({
+      ok: true,
+      fields: {
+        skills: 'React, Node.js, MongoDB',
+        education: 'B.Tech CSE, 2024',
+        workExperience: 'Acme — Full-stack dev — payments dashboard',
+      },
+    }),
 
     getSettings: async () => settings,
     setSettings: async (patch: Partial<AppSettings>) => {

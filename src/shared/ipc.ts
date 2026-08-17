@@ -9,6 +9,7 @@ import type {
   AnswerChunk,
   AnswerDone,
   AnswerError,
+  AnswerNudge,
   AppSettings,
   CandidateProfile,
   CredentialStatus,
@@ -36,6 +37,7 @@ export const INVOKE = {
 
   profileGet: 'profile:get',
   profileSet: 'profile:set',
+  profileAutofill: 'profile:autofill',
 
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
@@ -121,12 +123,16 @@ export interface InvokeMap {
   [INVOKE.sessionState]: { req: void; res: SessionState }
   [INVOKE.profileGet]: { req: void; res: CandidateProfile }
   [INVOKE.profileSet]: { req: CandidateProfile; res: { ok: boolean } }
+  [INVOKE.profileAutofill]: {
+    req: { resume: string }
+    res: { ok: boolean; fields?: Partial<CandidateProfile>; error?: string }
+  }
   [INVOKE.settingsGet]: { req: void; res: AppSettings }
   [INVOKE.settingsSet]: { req: Partial<AppSettings>; res: AppSettings }
   [INVOKE.credentialsStatus]: { req: void; res: CredentialStatus }
   [INVOKE.credentialsSet]: { req: Record<string, string>; res: CredentialStatus }
   [INVOKE.askManual]: { req: { text: string }; res: { ok: boolean } }
-  [INVOKE.answerRegenerate]: { req: void; res: { ok: boolean } }
+  [INVOKE.answerRegenerate]: { req: { nudge?: AnswerNudge } | void; res: { ok: boolean } }
   [INVOKE.answerCancel]: { req: void; res: { ok: boolean } }
   [INVOKE.overlayApply]: { req: Partial<AppSettings['ui']>; res: { ok: boolean } }
   [INVOKE.overlayHide]: { req: void; res: { ok: boolean } }

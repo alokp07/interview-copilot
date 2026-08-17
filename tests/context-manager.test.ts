@@ -8,12 +8,19 @@ import { describe, expect, it } from 'vitest'
 import {
   ContextManager,
   buildProfileCard,
+  experienceFraming,
   extractKeyterms,
 } from '@main/interview/context-manager'
 import type { LLMProvider, LLMRequest, LLMStreamEvent } from '@main/contracts/llm'
 import type { CandidateProfile, SessionConfig } from '@shared/types'
 
-const CONFIG: SessionConfig = { mode: 'general', answerLength: 'normal', speculative: true }
+const CONFIG: SessionConfig = {
+  mode: 'general',
+  answerLength: 'normal',
+  speculative: true,
+  grounded: true,
+  complexity: 'balanced',
+}
 
 const PROFILE: CandidateProfile = {
   name: 'Alok',
@@ -21,6 +28,8 @@ const PROFILE: CandidateProfile = {
   yearsExperience: '3 years',
   skills: 'React, Node.js, Python, MongoDB, AI systems, Pinecone, Kubernetes',
   projects: 'AI visual novel app; PDF-to-podcast pipeline',
+  education: 'B.Tech Computer Science, 2021',
+  workExperience: 'Acme — Full-stack dev — built the payments dashboard',
   resume: 'Detailed resume text. '.repeat(500),
   jobDescription: 'We need someone who ships. '.repeat(500),
   company: 'Acme',
@@ -172,6 +181,110 @@ describe('rolling summary', () => {
     // A stale summary is vastly better than a blocked answer path.
     await expect(context.maybeSummarize(broken, 'm')).resolves.toBeUndefined()
     expect(context.buildMessages('q', CONFIG).length).toBeGreaterThan(0)
+  })
+})
+
+describe('grounded answers', () => {
+  const system = (context: ContextManager, config = CONFIG): string =>
+    context.buildMessages('q', config)[0]!.content
+
+  const grounded = (context: ContextManager, config = CONFIG): boolean =>
+    system(context, config).includes('Staying credible')
+
+  it('injects the knowledge boundary when grounding is on and the profile has substance', () => {
+    const context = new ContextManager()
+    context.setProfile(PROFILE)
+    const rules = system(context)
+    expect(rules).toContain('Staying credible')
+    // The boundary is the literal skill list, not a vague reference — a small
+    // model treats "the profile" loosely but obeys an explicit toolkit.
+    expect(rules).toContain(`toolkit is: ${PROFILE.skills}`)
+    // The honest-bridge fallback — the whole point of the feature.
+    expect(rules).toContain('do not bluff')
+    expect(rules).toContain('using only things they actually know')
+    // The interviewer-mentioned-it escape hatch, so "have you used Kafka?"
+    // can still be answered about Kafka.
+    expect(rules).toContain('unless the interviewer named it first')
+  })
+
+  it('bans fabricated first-person history even when grounding is off', () => {
+    // Live testing caught empty-profile answers claiming invented experience
+    // three different ways; the converging fix is the tense rule — conditional
+    // always allowed, past tense only with profile backing. Every mode.
+    const context = new ContextManager()
+    const rules = system(context, { ...CONFIG, grounded: false })
+    expect(rules).toContain('Tense rule for experience')
+    expect(rules).toContain('never what you claim to HAVE done')
+  })
+
+  it('omits the boundary when grounding is switched off', () => {
+    const context = new ContextManager()
+    context.setProfile(PROFILE)
+    expect(grounded(context, { ...CONFIG, grounded: false })).toBe(false)
+  })
+
+  it('omits the boundary when the profile has nothing to enforce', () => {
+    const empty = new ContextManager()
+    expect(grounded(empty)).toBe(false)
+
+    // A name alone gives the boundary nothing to work with either.
+    const nameOnly = new ContextManager()
+    nameOnly.setProfile({ ...PROFILE, skills: '', projects: '', workExperience: '', resume: '' })
+    expect(nameOnly.hasGroundableContent()).toBe(false)
+    expect(grounded(nameOnly)).toBe(false)
+  })
+
+  it('varies register with the complexity setting', () => {
+    const context = new ContextManager()
+    const simple = system(context, { ...CONFIG, complexity: 'simple' })
+    const advanced = system(context, { ...CONFIG, complexity: 'advanced' })
+    expect(simple).toContain('plain language')
+    expect(simple).not.toContain('senior engineer')
+    expect(advanced).toContain('senior engineer')
+    expect(simple).not.toBe(advanced)
+  })
+
+  it('restates the hard constraints adjacent to the question', () => {
+    // Rules buried five blocks up were obeyed only stochastically in live
+    // testing; the one-line restatement next to the question is what holds.
+    const context = new ContextManager()
+    context.setProfile(PROFILE)
+    const messages = context.buildMessages('q', CONFIG)
+    const finalCheck = messages.at(-2)!.content
+    expect(finalCheck).toContain('Final check before answering')
+    expect(finalCheck).toContain(PROFILE.skills)
+    expect(finalCheck).toContain('conditional')
+
+    // Ungrounded still gets the tense reminder, just not the toolkit clause.
+    const open = new ContextManager().buildMessages('q', { ...CONFIG, grounded: false })
+    expect(open.at(-2)!.content).toContain('conditional')
+    expect(open.at(-2)!.content).not.toContain('toolkit')
+  })
+
+  it('appends the rewrite nudge as the last instruction before the question', () => {
+    const context = new ContextManager()
+    const messages = context.buildMessages('q', CONFIG, 'simpler')
+    expect(messages.at(-1)?.role).toBe('user')
+    expect(messages.at(-2)?.content).toContain('Rewrite guidance')
+    expect(messages.at(-2)?.content).toContain('plainer words')
+    // No nudge → no rewrite line anywhere.
+    const plain = context.buildMessages('q', CONFIG)
+    expect(plain.some((m) => m.content.includes('Rewrite guidance'))).toBe(false)
+  })
+
+  it('frames the voice by seniority', () => {
+    expect(experienceFraming({ ...PROFILE, yearsExperience: 'fresher', education: 'B.Tech, final year' })).toContain(
+      'early-career'
+    )
+    expect(experienceFraming({ ...PROFILE, yearsExperience: '8 years' })).toContain('experienced')
+    // Mid-level gets no special framing — the balanced default speaks for itself.
+    expect(experienceFraming({ ...PROFILE, yearsExperience: '3 years', education: '' })).toBe('')
+  })
+
+  it('includes education and work experience in the profile card', () => {
+    const card = buildProfileCard(PROFILE)
+    expect(card).toContain('Education: B.Tech Computer Science')
+    expect(card).toContain('Work experience: Acme')
   })
 })
 

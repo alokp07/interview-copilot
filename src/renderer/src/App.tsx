@@ -85,6 +85,8 @@ export function App(): ReactNode {
       mode: 'general',
       answerLength: 'normal',
       speculative: true,
+      grounded: true,
+      complexity: 'balanced',
     }
 
     // Audio first, and deliberately so: `getDisplayMedia` requires transient
@@ -188,6 +190,7 @@ export function App(): ReactNode {
             answer={answer}
             sessionState={sessionState}
             onRegenerate={() => void window.cue.regenerate()}
+            onNudge={(nudge) => void window.cue.regenerate(nudge)}
           />
 
           {settings?.ui.showTranscript ? (

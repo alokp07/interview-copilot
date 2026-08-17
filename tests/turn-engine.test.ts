@@ -97,7 +97,13 @@ function recorder(): TurnEngineEvents & {
   }
 }
 
-const CONFIG: SessionConfig = { mode: 'general', answerLength: 'normal', speculative: true }
+const CONFIG: SessionConfig = {
+  mode: 'general',
+  answerLength: 'normal',
+  speculative: true,
+  grounded: true,
+  complexity: 'balanced',
+}
 
 /**
  * Turn events carry `observedAt` on the same monotonic clock the tracer uses,
@@ -306,6 +312,25 @@ describe('duplicate suppression', () => {
     await settle(60)
 
     expect(llm.started).toBe(2)
+  })
+
+  it('threads a live nudge into the regenerated request', async () => {
+    const llm = new ScriptedLLM()
+    const { engine } = build(llm)
+
+    engine.handleTurn(turn('end', 'explain react reconciliation'))
+    await settle(60)
+    engine.regenerate('simpler')
+    await settle(60)
+
+    // The first request carried no rewrite line; the nudged one must.
+    const first = llm.calls.at(0)!.messages.map((m) => m.content).join('\n')
+    const nudged = llm.calls.at(1)!.messages.map((m) => m.content).join('\n')
+    expect(first).not.toContain('Rewrite guidance')
+    expect(nudged).toContain('Rewrite guidance')
+    expect(nudged).toContain('plainer words')
+    // Same question, not a new one.
+    expect(llm.calls.at(1)!.messages.at(-1)?.content).toBe('explain react reconciliation')
   })
 })
 
@@ -537,6 +562,8 @@ describe('prompt construction', () => {
       yearsExperience: '3 years',
       skills: 'React, Node.js, Python, MongoDB',
       projects: 'AI visual novel app; PDF-to-podcast pipeline',
+      education: 'B.Tech CSE, 2023',
+      workExperience: 'Acme — Full-stack dev',
       resume: 'x'.repeat(20_000),
       jobDescription: 'y'.repeat(20_000),
       company: 'Acme',

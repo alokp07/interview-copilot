@@ -1,13 +1,20 @@
 /**
  * Interview context. Everything here is optional — the app works without it —
  * but it is what separates a generic answer from one that sounds like this
- * candidate. Held in memory only, never written to disk.
+ * candidate. With grounding on, it is also the knowledge boundary: answers may
+ * only claim what this page supports. Persisted encrypted on this device
+ * (OS keychain); Clear removes it from disk.
  */
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { Button, Field, Label, Select, TextArea, TextInput } from './primitives'
+import { Button, Field, Label, Select, TextArea, TextInput, Toggle } from './primitives'
 import { useStore } from '../state/store'
-import { EMPTY_PROFILE, type CandidateProfile, type InterviewMode } from '@shared/types'
+import {
+  EMPTY_PROFILE,
+  type AnswerComplexity,
+  type CandidateProfile,
+  type InterviewMode,
+} from '@shared/types'
 
 const MODES: Array<{ value: InterviewMode; label: string }> = [
   { value: 'general', label: 'General' },
@@ -27,6 +34,7 @@ export function ProfileView(): ReactNode {
 
   const [draft, setDraft] = useState<CandidateProfile>(stored)
   const [dirty, setDirty] = useState(false)
+  const [autofilling, setAutofilling] = useState(false)
 
   useEffect(() => {
     setDraft(stored)
@@ -42,7 +50,45 @@ export function ProfileView(): ReactNode {
     await window.cue.setProfile(draft)
     setStored(draft)
     setDirty(false)
-    showToast('info', 'Profile applied to this session.')
+    showToast('info', 'Profile applied and saved (encrypted on this device).')
+  }
+
+  /** Grounding needs material to enforce; used to warn when there is none. */
+  const hasSubstance = Boolean(
+    draft.skills.trim() || draft.projects.trim() || draft.workExperience.trim() || draft.resume.trim()
+  )
+
+  const autofill = async (): Promise<void> => {
+    setAutofilling(true)
+    try {
+      const result = await window.cue.autofillProfile(draft.resume)
+      if (!result.ok || !result.fields) {
+        showToast('warn', result.error ?? 'Nothing could be extracted.')
+        return
+      }
+      // Fill blanks only — never overwrite something the user typed themselves.
+      const filled: string[] = []
+      setDraft((d) => {
+        const next = { ...d }
+        for (const [key, value] of Object.entries(result.fields!)) {
+          const k = key as keyof CandidateProfile
+          if (!next[k]?.trim() && value?.trim()) {
+            next[k] = value
+            filled.push(key)
+          }
+        }
+        return next
+      })
+      setDirty(true)
+      showToast(
+        filled.length > 0 ? 'info' : 'warn',
+        filled.length > 0
+          ? `Filled ${filled.length} field${filled.length === 1 ? '' : 's'} — review, then Apply.`
+          : 'All fields were already filled in; nothing changed.'
+      )
+    } finally {
+      setAutofilling(false)
+    }
   }
 
   return (
@@ -82,6 +128,43 @@ export function ProfileView(): ReactNode {
         </Field>
       </div>
 
+      <Field
+        label="Answer complexity"
+        hint="How advanced the vocabulary and depth should sound. Adjustable live with the “simpler / deeper” buttons on any answer."
+      >
+        <Select<AnswerComplexity>
+          value={settings?.session.complexity ?? 'balanced'}
+          options={[
+            { value: 'simple', label: 'Simple — plain words, no unprompted jargon' },
+            { value: 'balanced', label: 'Balanced — working-engineer voice' },
+            { value: 'advanced', label: 'Advanced — senior voice, tradeoffs, numbers' },
+          ]}
+          onChange={(complexity) => {
+            if (!settings) return
+            void window.cue
+              .setSettings({ session: { ...settings.session, complexity } })
+              .then(setSettings)
+          }}
+        />
+      </Field>
+
+      <Toggle
+        label="Ground answers in my profile"
+        hint={
+          'Answers only claim experience this page supports. Unfamiliar topics get an honest ' +
+          '“I haven’t used it hands-on, but I know the concept…” with a bridge to what you do know. ' +
+          'Turn off for unconstrained best-possible answers.' +
+          (settings?.session.grounded && !hasSubstance
+            ? ' — Add skills, projects or work experience below for this to have any effect.'
+            : '')
+        }
+        checked={settings?.session.grounded ?? true}
+        onChange={(grounded) => {
+          if (!settings) return
+          void window.cue.setSettings({ session: { ...settings.session, grounded } }).then(setSettings)
+        }}
+      />
+
       <Label>Candidate</Label>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Name">
@@ -104,11 +187,20 @@ export function ProfileView(): ReactNode {
         />
       </Field>
 
-      <Field label="Company">
-        <TextInput value={draft.company} onChange={(v) => update('company', v)} />
-      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Company">
+          <TextInput value={draft.company} onChange={(v) => update('company', v)} />
+        </Field>
+        <Field label="Education">
+          <TextInput
+            value={draft.education}
+            onChange={(v) => update('education', v)}
+            placeholder="B.Tech CSE, 2024"
+          />
+        </Field>
+      </div>
 
-      <Field label="Skills" hint="Comma-separated. Also used to bias speech recognition.">
+      <Field label="Skills" hint="Comma-separated. Also used to bias speech recognition — and, when grounding is on, this is the boundary of what answers may claim.">
         <TextArea
           value={draft.skills}
           onChange={(v) => update('skills', v)}
@@ -126,6 +218,18 @@ export function ProfileView(): ReactNode {
         />
       </Field>
 
+      <Field
+        label="Work experience"
+        hint="Companies, roles, what you actually did — behavioral answers draw from this."
+      >
+        <TextArea
+          value={draft.workExperience}
+          onChange={(v) => update('workExperience', v)}
+          rows={3}
+          placeholder="Acme — Full-stack dev — built the payments dashboard, led the React migration"
+        />
+      </Field>
+
       <Field label="Job description">
         <TextArea value={draft.jobDescription} onChange={(v) => update('jobDescription', v)} rows={4} />
       </Field>
@@ -133,6 +237,14 @@ export function ProfileView(): ReactNode {
       <Field label="Resume" hint="Pasted text. Trimmed automatically to keep prompts small and fast.">
         <TextArea value={draft.resume} onChange={(v) => update('resume', v)} rows={5} />
       </Field>
+
+      <Button
+        onClick={() => void autofill()}
+        disabled={!draft.resume.trim() || autofilling}
+        title="Extracts skills, projects, education and work history from the pasted resume. Fills empty fields only — your own entries are never overwritten."
+      >
+        {autofilling ? 'Reading resume…' : 'Auto-fill profile from this resume'}
+      </Button>
 
       <Field label="Custom instructions" hint="e.g. 'Mention the fintech background when relevant.'">
         <TextArea value={draft.notes} onChange={(v) => update('notes', v)} rows={2} />
@@ -150,10 +262,13 @@ export function ProfileView(): ReactNode {
             setDraft({ ...EMPTY_PROFILE })
             setDirty(true)
           }}
+          title="Empties the form. Apply afterwards to also delete the encrypted copy from disk."
         >
           Clear
         </Button>
-        <span className="ml-auto text-[10px] text-fg-faint">Memory only · wiped on quit</span>
+        <span className="ml-auto text-[10px] text-fg-faint">
+          Encrypted on this device · never leaves it
+        </span>
       </div>
     </div>
   )

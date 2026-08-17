@@ -9,7 +9,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Dot, Label, Listening, Pill } from './primitives'
 import type { AnswerView } from '../state/store'
-import type { DetectedQuestion, SessionState, TranscriptLine } from '@shared/types'
+import type { AnswerNudge, DetectedQuestion, SessionState, TranscriptLine } from '@shared/types'
 
 /** Keeps a scroll container pinned to the bottom unless the user scrolls away. */
 function useStickToBottom(deps: unknown[]): {
@@ -87,10 +87,12 @@ export function AnswerPanel({
   answer,
   sessionState,
   onRegenerate,
+  onNudge,
 }: {
   answer: AnswerView
   sessionState: SessionState
   onRegenerate: () => void
+  onNudge: (nudge: AnswerNudge) => void
 }): ReactNode {
   const { scrollRef, endRef } = useStickToBottom([answer.text])
   const [copied, setCopied] = useState(false)
@@ -113,21 +115,19 @@ export function AnswerPanel({
         right={
           hasText && answer.state !== 'thinking' ? (
             <span className="no-drag flex items-center gap-1">
-              <button
-                type="button"
-                onClick={copy}
-                className="rounded px-1 py-px text-[9.5px] text-fg-faint transition-colors hover:text-fg-muted"
-              >
-                {copied ? 'copied' : 'copy'}
-              </button>
-              <button
-                type="button"
-                onClick={onRegenerate}
-                title="Regenerate (Ctrl+Shift+R)"
-                className="rounded px-1 py-px text-[9.5px] text-fg-faint transition-colors hover:text-fg-muted"
-              >
+              {/* The mid-interview escape hatch: an answer pitched wrong gets
+                  rewritten in one click, no settings dive. */}
+              <AnswerAction onClick={() => onNudge('simpler')} title="Rewrite in plainer language">
+                simpler
+              </AnswerAction>
+              <AnswerAction onClick={() => onNudge('deeper')} title="Add a layer of technical depth">
+                deeper
+              </AnswerAction>
+              <span className="mx-0.5 h-2.5 w-px bg-line-strong" aria-hidden />
+              <AnswerAction onClick={copy}>{copied ? 'copied' : 'copy'}</AnswerAction>
+              <AnswerAction onClick={onRegenerate} title="Regenerate (Ctrl+Shift+R)">
                 retry
-              </button>
+              </AnswerAction>
             </span>
           ) : (
             <AnswerStatus answer={answer} />
@@ -157,6 +157,27 @@ export function AnswerPanel({
         <div ref={endRef} />
       </div>
     </div>
+  )
+}
+
+function AnswerAction({
+  children,
+  onClick,
+  title,
+}: {
+  children: ReactNode
+  onClick: () => void
+  title?: string
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className="rounded px-1 py-px text-[9.5px] text-fg-faint transition-colors hover:text-fg-muted"
+    >
+      {children}
+    </button>
   )
 }
 

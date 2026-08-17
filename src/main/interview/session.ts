@@ -25,8 +25,11 @@ import type {
 
 const log = createLogger('session')
 
-/** Model used for off-critical-path summarization: cheapest and fastest. */
-const SUMMARY_MODELS: Record<string, string> = {
+/**
+ * Model used for off-critical-path work (summarization, resume parsing):
+ * cheapest and fastest per provider.
+ */
+export const SUMMARY_MODELS: Record<string, string> = {
   groq: 'openai/gpt-oss-20b',
   openai: 'gpt-4o-mini',
   openrouter: 'openai/gpt-4o-mini',

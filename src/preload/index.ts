@@ -11,6 +11,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { INVOKE, PUSH, SEND } from '@shared/ipc'
 import type { PushMap, ShortcutAction } from '@shared/ipc'
 import type {
+  AnswerNudge,
   AppSettings,
   CandidateProfile,
   CredentialStatus,
@@ -46,6 +47,10 @@ const api = {
   getProfile: (): Promise<CandidateProfile> => ipcRenderer.invoke(INVOKE.profileGet),
   setProfile: (profile: CandidateProfile): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(INVOKE.profileSet, profile),
+  autofillProfile: (
+    resume: string
+  ): Promise<{ ok: boolean; fields?: Partial<CandidateProfile>; error?: string }> =>
+    ipcRenderer.invoke(INVOKE.profileAutofill, { resume }),
 
   // --- settings ------------------------------------------------------------
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(INVOKE.settingsGet),
@@ -65,7 +70,8 @@ const api = {
   // --- answers -------------------------------------------------------------
   askManual: (text: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(INVOKE.askManual, { text }),
-  regenerate: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(INVOKE.answerRegenerate),
+  regenerate: (nudge?: AnswerNudge): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(INVOKE.answerRegenerate, nudge ? { nudge } : undefined),
   cancelAnswer: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(INVOKE.answerCancel),
 
   // --- diagnostics ---------------------------------------------------------

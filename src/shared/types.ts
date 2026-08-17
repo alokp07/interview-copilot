@@ -206,6 +206,10 @@ export interface CandidateProfile {
   yearsExperience: string
   skills: string
   projects: string
+  /** Degrees, institutions, coursework — freshers answer from this, not employment. */
+  education: string
+  /** Companies, roles, what they actually did — behavioral answers draw from this. */
+  workExperience: string
   resume: string
   jobDescription: string
   company: string
@@ -218,11 +222,23 @@ export const EMPTY_PROFILE: CandidateProfile = {
   yearsExperience: '',
   skills: '',
   projects: '',
+  education: '',
+  workExperience: '',
   resume: '',
   jobDescription: '',
   company: '',
   notes: '',
 }
+
+/**
+ * How sophisticated the answer's vocabulary and depth should sound.
+ * This is about *credibility*, not quality: an answer above the candidate's
+ * level reads as coached the moment the interviewer probes it.
+ */
+export type AnswerComplexity = 'simple' | 'balanced' | 'advanced'
+
+/** Live rewrite request for the current answer. */
+export type AnswerNudge = 'simpler' | 'deeper'
 
 export interface SessionConfig {
   mode: InterviewMode
@@ -230,6 +246,13 @@ export interface SessionConfig {
   answerLength: 'brief' | 'normal' | 'detailed'
   /** Fire generation on eager end-of-turn instead of waiting for confirmation. */
   speculative: boolean
+  /**
+   * Constrain answers to the candidate's actual knowledge: only claim
+   * experience the profile supports, and answer unfamiliar topics with an
+   * honest concept-plus-bridge instead of a bluff.
+   */
+  grounded: boolean
+  complexity: AnswerComplexity
 }
 
 export type SessionState = 'stopped' | 'starting' | 'running' | 'stopping'

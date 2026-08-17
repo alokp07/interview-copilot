@@ -39,6 +39,11 @@ const sessionSettings = z.object({
     .default('general'),
   answerLength: z.enum(['brief', 'normal', 'detailed']).default('normal'),
   speculative: z.boolean().default(true),
+  // On by default: an answer the candidate cannot defend in a follow-up is
+  // worse than a plainer one they own. Users with deep expertise can turn it
+  // off for unconstrained answers.
+  grounded: z.boolean().default(true),
+  complexity: z.enum(['simple', 'balanced', 'advanced']).default('balanced'),
 })
 
 // `prefault` (not `default`) so an absent section is replaced by `{}` *before*

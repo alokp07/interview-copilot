@@ -253,6 +253,58 @@ Flags: `--no-speculative`, `--model <id>`, `--eager <0.3–0.9>`, `--rounds <n>`
 Comparing with and without `--no-speculative` shows what the speculation is
 worth on your connection.
 
+## Grounded answers
+
+The best answer is not the best answer to the question — it is the best answer
+*this candidate could plausibly give*. An answer that name-drops Cassandra to
+someone who has never heard of it collapses at the first follow-up, which is
+worse than a plainer answer they own. Cue enforces that principle; competitors
+personalize from a resume, but none of them enforce a knowledge boundary.
+
+**Ground answers in my profile** (Profile tab, on by default) constrains every
+answer to what the profile supports:
+
+- Only claims hands-on experience with technologies in your skills list — the
+  boundary is your literal toolkit, spelled out to the model.
+- Never names a technology outside it *unless the interviewer named it first*
+  ("have you used Kafka?" still gets a Kafka answer).
+- Questions beyond your toolkit get the honest bridge: one clause admitting
+  limited hands-on exposure, one correct sentence about the concept, then the
+  problem worked from things you actually know. Live-verified — a fresher
+  profile asked to design a 100k-rps URL shortener answered with JavaScript
+  hash maps and its own to-do-app localStorage experience, closing with *"those
+  are beyond my current toolkit"* instead of reciting Redis clusters.
+- A tense rule applies in **every** mode: what you *would* do is always fair
+  game, what you claim to *have* done requires profile backing.
+
+**Answer complexity** (Simple / Balanced / Advanced) sets the register — plain
+practitioner language through senior-engineer tradeoffs-and-numbers. And when
+an answer still lands wrong mid-interview, the **simpler / deeper** buttons on
+the answer rewrite it in one click; no settings dive during a live call.
+
+Turn grounding off for unconstrained best-possible answers. One documented
+limitation: ungrounded mode with a *completely empty* profile may still invent
+experience ("in a recent project we…") despite prompt-side bans — a small model
+completes the candidate persona with fiction when it has nothing true to cite.
+Grounding (the default) does not have this problem, which is why it is the
+default. Verify the behaviour yourself against the live model:
+
+```powershell
+$env:LIVE='1'; npx vitest run tests/grounding-live.test.ts
+# answers land in grounding-live.log for reading
+```
+
+The profile that powers this is **persisted encrypted on this device** (DPAPI
+via `safeStorage`, the same mechanism as API keys) and loaded at launch — no
+more re-typing it every session. It never leaves the machine; **Clear** +
+Apply deletes the encrypted file. **Auto-fill from resume** extracts skills,
+projects, education and work history from pasted resume text into any fields
+you left blank (your own entries are never overwritten), using the same
+provider off the answer path.
+
+Grounded generations also run at lower sampling temperature (0.35 vs 0.5) —
+constraint adherence improves and the voice survives fine.
+
 ## Tuning latency
 
 **Prediction threshold** (Settings, default 0.4) trades discarded work for head
