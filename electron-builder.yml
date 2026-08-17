@@ -15,6 +15,7 @@ asar: true
 compression: maximum
 
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]
@@ -29,6 +30,8 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Cue
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
 
 mac:
   target:

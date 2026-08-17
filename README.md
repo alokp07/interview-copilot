@@ -224,11 +224,43 @@ if they kept talking.
 
 ```bash
 npm run dev          # hot-reloading dev build
-npm run build        # typecheck + production build
-npm test             # 72 tests
+npm run build        # typecheck + production build (out/)
+npm test             # unit tests
 npm run bench        # end-to-end latency benchmark against live APIs
-npm run package:win  # NSIS installer into release/
+npm run probe        # verify provider keys and that configured models still exist
+npm run package:win  # signed-by-nobody NSIS installer into release/
+npm run package:dir  # unpacked app folder only (no installer)
 ```
+
+## Building a distributable installer
+
+`npm run package:win` produces `release/Cue-<version>-win-x64.exe` — a ~95 MB
+NSIS installer with a Start-menu entry, desktop shortcut, and uninstaller.
+Users can choose the install directory; it installs per-user, so no admin
+prompt.
+
+**The Node problem, solved without touching your system.** `electron-builder`
+cannot run on Node < 20.19 (it `require()`s the ESM-only `@noble/hashes` while
+generating the update blockmap). Rather than force a machine-wide Node upgrade
+that would affect every other project, `scripts/build-installer.mjs` downloads a
+**checksum-verified portable Node** into `.tools/` (gitignored) and runs the
+build with it, via a PATH override scoped to that child process. Your global
+Node install is never modified — deleting `.tools/` undoes everything. On a
+machine already running Node ≥ 20.19 the script detects it and skips straight to
+electron-builder.
+
+**Two caveats for anything you distribute publicly:**
+
+1. **The binary is unsigned.** Windows SmartScreen will show
+   "Windows protected your PC" on first run; users must click *More info →
+   Run anyway*. Removing that warning requires an Authenticode code-signing
+   certificate (a real annual cost, tied to a verified identity) — there is no
+   free workaround, and reputation-based warnings ease only after enough
+   downloads.
+2. **The installer contains no API keys**, by design. `.env` is a development
+   convenience that is never packaged. Anyone installing the app enters their
+   own Deepgram and LLM keys in **Settings**, where they are encrypted with
+   their own OS keychain.
 
 ### The benchmark
 

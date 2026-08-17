@@ -20,8 +20,8 @@
     "test:watch": "vitest",
     "bench": "node --experimental-websocket scripts/bench-latency.mjs",
     "probe": "node --experimental-websocket scripts/probe-providers.mjs",
-    "package:win": "npm run build && electron-builder --win --publish never",
-    "package:dir": "npm run build && electron-builder --dir --publish never"
+    "package:win": "npm run build && node scripts/build-installer.mjs",
+    "package:dir": "npm run build && node scripts/build-installer.mjs --dir"
   },
   "dependencies": {},
   "devDependencies": {
