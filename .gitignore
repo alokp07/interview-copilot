@@ -1,0 +1,19 @@
+node_modules/
+out/
+dist/
+release/
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+traces/
+
+# Archives of the project directory tend to contain .env - never commit them.
+*.zip
+*.7z
+*.tar.gz
+prod.log
+proderr.log

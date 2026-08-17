@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Locked down deliberately: the renderer only ever talks to the main process
+      over IPC, so it needs no network access of its own. Provider connections
+      live in main, where the API keys are.
+    -->
+    <!--
+      `script-src` must allow `blob:`: the PCM encoder AudioWorklet is loaded
+      from a Blob URL, and Chromium fetches worklet modules as scripts. Without
+      it `audioWorklet.addModule()` is blocked and *both* capture channels fail,
+      since they share one AudioContext.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Cue</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

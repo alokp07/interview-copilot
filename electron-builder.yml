@@ -1,0 +1,48 @@
+appId: com.cue.interviewcopilot
+productName: Cue
+copyright: Copyright © 2026
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+
+# The app is fully bundled, so nothing from node_modules needs shipping.
+asar: true
+compression: maximum
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # Requires Windows 10 2004+ for WDA_EXCLUDEFROMCAPTURE, which is what makes
+  # the overlay invisible to screen sharing.
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Cue
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.productivity
+  extendInfo:
+    # macOS 14.2+ requires this to capture system audio via the CoreAudio Tap API.
+    NSAudioCaptureUsageDescription: Cue transcribes the interviewer's audio to suggest answers.
+    NSMicrophoneUsageDescription: Cue transcribes your speech so it does not answer your own questions.
+
+linux:
+  target:
+    - AppImage
+  category: Utility
+
+publish: null
