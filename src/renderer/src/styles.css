@@ -37,7 +37,28 @@
     sans-serif;
   --font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Consolas, monospace;
 
-  --radius-card: 10px;
+  --radius-card: 13px;
+}
+
+/*
+  Material layer (v2 look). The palette above stays; this adds depth: a gradient-
+  lit backdrop, frosted-glass panels, gradient accents and an accent glow on the
+  live answer. Defined as vars so light/dark each get the right translucency.
+*/
+:root {
+  --glass-bg: rgba(20, 23, 30, 0.58);
+  --glass-bg-strong: rgba(26, 30, 39, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-hi: rgba(255, 255, 255, 0.06);
+  --shadow-card: 0 14px 40px -20px rgba(0, 0, 0, 0.8);
+  --radius-lg: 16px;
+}
+:root[data-theme='light'] {
+  --glass-bg: rgba(255, 255, 255, 0.66);
+  --glass-bg-strong: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(18, 24, 38, 0.08);
+  --glass-hi: rgba(255, 255, 255, 0.75);
+  --shadow-card: 0 16px 40px -22px rgba(20, 30, 55, 0.4);
 }
 
 /*
@@ -101,7 +122,20 @@ body,
 }
 
 body {
-  background: var(--color-base);
+  /* Two faint accent/spec glows bleed in from the corners over the base — the
+     surface is no longer a flat rectangle, which is most of the new feel. */
+  background:
+    radial-gradient(
+      135% 100% at 100% -10%,
+      color-mix(in oklab, var(--color-accent) 16%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      120% 90% at -10% 110%,
+      color-mix(in oklab, var(--color-spec) 12%, transparent),
+      transparent 55%
+    ),
+    var(--color-base);
   color: var(--color-fg);
   font-family: var(--font-sans);
   font-size: 13px;
@@ -125,24 +159,81 @@ body {
 }
 
 /*
-  Cards get a one-pixel top highlight rather than a drop shadow: on a dark
-  overlay sitting above a video call, shadows muddy; a light edge reads as
-  lift without adding weight.
+  Cards are frosted glass now: a translucent fill over the gradient backdrop with
+  a real blur, a light top edge, and a soft shadow for lift. This is what makes
+  every panel read as layered material rather than flat boxes.
 */
 .card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-line);
+  background: var(--glass-bg);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-card);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
 }
 
 .card-raised {
-  background: var(--color-raised);
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius-card);
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.04),
-    0 1px 3px rgb(0 0 0 / 0.3);
+    var(--shadow-card),
+    inset 0 1px 0 var(--glass-hi);
+}
+
+/* Inset accent ring for active segmented items (tabs, mode switch). */
+.ring-accent {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent) 32%, transparent);
+}
+
+/* Frosted top/bottom bars, so the chrome floats over the gradient too. */
+.chrome-bar {
+  background: color-mix(in oklab, var(--color-surface) 78%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+}
+
+/* Gradient + glow helpers used across the chrome. */
+.text-grad {
+  background: linear-gradient(115deg, var(--color-accent), var(--color-accent-soft));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.btn-grad {
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-soft));
+  color: #ffffff;
+  border: 1px solid color-mix(in oklab, var(--color-accent) 60%, black 10%);
+  box-shadow:
+    0 6px 18px -8px color-mix(in oklab, var(--color-accent) 75%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 0.25);
+}
+.btn-grad:hover {
+  filter: brightness(1.08);
+}
+
+.brand-dot {
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-soft));
+  box-shadow: 0 0 14px -2px color-mix(in oklab, var(--color-accent) 80%, transparent);
+}
+
+/* The live answer lifts with an accent halo while streaming/predicting. */
+.glow-accent {
+  border-color: color-mix(in oklab, var(--color-accent) 42%, transparent) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-accent) 28%, transparent),
+    0 18px 50px -22px color-mix(in oklab, var(--color-accent) 60%, transparent),
+    inset 0 1px 0 var(--glass-hi);
+}
+.glow-spec {
+  border-color: color-mix(in oklab, var(--color-spec) 45%, transparent) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-spec) 30%, transparent),
+    0 18px 50px -22px color-mix(in oklab, var(--color-spec) 60%, transparent),
+    inset 0 1px 0 var(--glass-hi);
 }
 
 /* Section labels: small, quiet, consistent. */

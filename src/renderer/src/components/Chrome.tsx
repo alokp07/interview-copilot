@@ -29,24 +29,28 @@ export function TitleBar({
   const busy = sessionState === 'starting' || sessionState === 'stopping'
 
   return (
-    <header className="drag flex items-center gap-2 border-b border-line bg-surface px-2 py-1.5">
+    <header className="drag chrome-bar flex items-center gap-2 border-b border-line px-2.5 py-2">
       <span className="flex shrink-0 items-center gap-1.5 pl-0.5">
-        <Dot tone={running ? 'live' : 'idle'} pulse={running} size={7} />
-        <span className="text-[12px] font-semibold tracking-tight text-fg">Cue</span>
+        <span className="brand-dot relative inline-flex h-[16px] w-[16px] items-center justify-center rounded-[6px]">
+          {running ? (
+            <span className="absolute inset-0 rounded-[6px] bg-live/80 pulse" />
+          ) : null}
+        </span>
+        <span className="text-grad text-[14px] font-bold tracking-tight">Cue</span>
       </span>
 
       <Timer running={running} />
 
       {/* Segmented control reads as one object, unlike three separate buttons. */}
-      <nav className="no-drag ml-auto flex shrink-0 items-center rounded-lg bg-base p-[2px]">
+      <nav className="no-drag ml-auto flex shrink-0 items-center rounded-[10px] border border-line bg-base/60 p-[2px]">
         {VIEWS.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => setView(item.id)}
-            className={`rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-100 ${
+            className={`rounded-[8px] px-2.5 py-[4px] text-[11px] font-medium transition-all duration-100 ${
               view === item.id
-                ? 'bg-overlay text-fg shadow-[inset_0_1px_0_rgb(255_255_255/0.05)]'
+                ? 'ring-accent bg-accent/15 text-accent-soft'
                 : 'text-fg-faint hover:text-fg-muted'
             }`}
           >
@@ -125,7 +129,7 @@ export function StatusBar({ showLatency }: { showLatency: boolean }): ReactNode 
   const { last, median, hitRate } = summarizeTraces(traces)
 
   return (
-    <footer className="shrink-0 border-t border-line bg-surface">
+    <footer className="chrome-bar shrink-0 border-t border-line">
       {sessionError ? (
         <p
           className="truncate border-b border-danger/20 bg-danger/10 px-2.5 py-1 text-[10px] text-danger"

@@ -69,11 +69,11 @@ export function QuestionPanel({ question }: { question: DetectedQuestion | null 
         Question
       </Label>
       <div
-        className={`selectable rounded-lg border-l-2 bg-surface py-2 pl-2.5 pr-3 transition-colors duration-200 ${
+        className={`selectable card border-l-[3px] py-2.5 pl-3 pr-3.5 transition-colors duration-200 ${
           question.speculative ? 'border-l-spec' : 'border-l-accent'
         }`}
       >
-        <p className="text-[13px] font-medium leading-snug text-fg">{question.text}</p>
+        <p className="text-[13.5px] font-medium leading-snug text-fg">{question.text}</p>
       </div>
     </div>
   )
@@ -139,8 +139,12 @@ export function AnswerPanel({
 
       <div
         ref={scrollRef}
-        className={`card-raised min-h-0 flex-1 overflow-y-auto px-3.5 py-3 transition-colors duration-200 ${
-          answer.speculative ? 'border-spec/35 bg-spec/[0.045]' : ''
+        className={`card-raised min-h-0 flex-1 overflow-y-auto px-4 py-3.5 transition-all duration-300 ${
+          answer.speculative
+            ? 'glow-spec'
+            : answer.state === 'streaming' || answer.state === 'thinking'
+              ? 'glow-accent'
+              : ''
         }`}
       >
         {answer.error ? (

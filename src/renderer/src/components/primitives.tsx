@@ -66,7 +66,10 @@ export function Listening(): ReactNode {
 export function Label({ children, right }: { children: ReactNode; right?: ReactNode }): ReactNode {
   return (
     <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-      <span className="label">{children}</span>
+      <span className="flex items-center gap-1.5">
+        <span className="h-2.5 w-[3px] rounded-full bg-accent/70" aria-hidden />
+        <span className="label">{children}</span>
+      </span>
       {right}
     </div>
   )
@@ -115,8 +118,7 @@ export function Button({
     ghost:
       'bg-raised hover:bg-overlay text-fg-muted hover:text-fg border border-line-strong',
     subtle: 'bg-transparent hover:bg-raised text-fg-faint hover:text-fg-muted border border-transparent',
-    primary:
-      'bg-accent hover:bg-accent-soft text-[#0a0b0d] border border-transparent font-semibold',
+    primary: 'btn-grad font-semibold',
     danger: 'bg-danger/12 hover:bg-danger/20 text-danger border border-danger/25 font-medium',
   }[tone]
 

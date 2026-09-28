@@ -42,9 +42,9 @@ export function ListenControl({
   return (
     <div className="fade-in flex shrink-0 items-center gap-2">
       {listenMode === 'always' ? (
-        <div className="flex flex-1 items-center gap-2 rounded-lg border border-live/25 bg-live/[0.06] px-3 py-2">
+        <div className="card flex flex-1 items-center gap-2 border-l-[3px] border-l-live px-3 py-2.5">
           <Listening />
-          <span className="text-[12px] font-medium text-live">Always answering</span>
+          <span className="text-[12px] font-semibold text-live">Always answering</span>
           <span className="ml-auto text-[10px] text-fg-faint">every question</span>
         </div>
       ) : (
@@ -56,10 +56,10 @@ export function ListenControl({
             onPointerLeave={() => holding && window.cue.setListen('idle')}
             onPointerCancel={() => window.cue.setListen('idle')}
             title="Hold to let Cue answer while pressed"
-            className={`no-drag flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[12px] font-semibold transition-colors duration-100 select-none ${
+            className={`no-drag flex flex-1 items-center justify-center gap-2 rounded-[12px] border px-3 py-2.5 text-[12.5px] font-semibold transition-all duration-150 select-none ${
               holding
-                ? 'border-accent bg-accent text-[#0a0b0d]'
-                : 'border-line-strong bg-raised text-fg-muted hover:text-fg'
+                ? 'btn-grad border-transparent'
+                : 'border-line-strong bg-raised/70 text-fg-muted hover:text-fg'
             }`}
           >
             {holding ? (
@@ -76,10 +76,10 @@ export function ListenControl({
             type="button"
             onClick={() => window.cue.setListen(armed ? 'idle' : 'armed')}
             title="Answer the next question, then stop — Ctrl+Shift+A"
-            className={`no-drag flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] font-medium transition-colors duration-100 ${
+            className={`no-drag flex items-center gap-1.5 rounded-[12px] border px-3 py-2.5 text-[12px] font-semibold transition-all duration-150 ${
               armed
-                ? 'border-spec bg-spec/15 text-spec'
-                : 'border-line-strong bg-raised text-fg-muted hover:text-fg'
+                ? 'border-spec/60 bg-spec/15 text-spec shadow-[0_0_18px_-6px_var(--color-spec)]'
+                : 'border-line-strong bg-raised/70 text-fg-muted hover:text-fg'
             }`}
           >
             {armed ? (
@@ -95,15 +95,15 @@ export function ListenControl({
       )}
 
       {/* Quick mode switch, so the candidate can flip to always-on without a Settings dive. */}
-      <div className="no-drag flex shrink-0 items-center rounded-lg bg-base p-[2px]">
+      <div className="no-drag flex shrink-0 items-center rounded-[10px] border border-line bg-base/60 p-[2px]">
         {(['manual', 'always'] as ListenMode[]).map((m) => (
           <button
             key={m}
             type="button"
             onClick={() => onChangeMode(m)}
-            className={`rounded-[6px] px-2 py-[3px] text-[10px] capitalize transition-colors duration-100 ${
+            className={`rounded-[8px] px-2 py-[4px] text-[10px] font-medium capitalize transition-all duration-100 ${
               listenMode === m
-                ? 'bg-overlay text-fg shadow-[inset_0_1px_0_rgb(255_255_255/0.05)]'
+                ? 'ring-accent bg-accent/15 text-accent-soft'
                 : 'text-fg-faint hover:text-fg-muted'
             }`}
           >
