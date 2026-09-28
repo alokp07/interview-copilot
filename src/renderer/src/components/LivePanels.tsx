@@ -8,7 +8,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Dot, Label, Listening, Pill } from './primitives'
-import type { AnswerView } from '../state/store'
+import { useStore, type AnswerView } from '../state/store'
 import type { AnswerNudge, DetectedQuestion, SessionState, TranscriptLine } from '@shared/types'
 
 /** Keeps a scroll container pinned to the bottom unless the user scrolls away. */
@@ -241,20 +241,80 @@ function IdleState({ sessionState }: { sessionState: SessionState }): ReactNode 
     )
   }
 
+  return <Onboarding />
+}
+
+/** First-run readiness: what's set up, what's left, and the keys to know. */
+function Onboarding(): ReactNode {
+  const credentials = useStore((s) => s.credentials)
+  const profile = useStore((s) => s.profile)
+  const setView = useStore((s) => s.setView)
+
+  const keysReady = Boolean(
+    credentials?.deepgram &&
+      (credentials?.groq ||
+        credentials?.openrouter ||
+        credentials?.openai ||
+        credentials?.anthropic)
+  )
+  const profileReady = Boolean(
+    profile.name.trim() || profile.skills.trim() || profile.role.trim()
+  )
+
+  const steps: Array<{ done: boolean; label: string; hint: string; to?: 'profile' | 'settings' }> = [
+    {
+      done: keysReady,
+      label: 'Add your API keys',
+      hint: keysReady ? 'Speech and model keys are set.' : 'Deepgram + one model provider.',
+      to: 'settings',
+    },
+    {
+      done: profileReady,
+      label: 'Fill in your profile',
+      hint: profileReady ? 'Answers will draw on your experience.' : 'Optional, but grounds every answer.',
+      to: 'profile',
+    },
+  ]
+
   return (
-    <div className="flex h-full flex-col justify-center gap-3 py-4">
+    <div className="flex h-full flex-col justify-center gap-4 py-4">
       <div className="text-center">
-        <p className="text-[12.5px] font-medium text-fg-muted">Ready when you are</p>
-        <p className="mt-1 text-[11px] leading-relaxed text-fg-faint">
-          Press Start, or fill in Profile first for answers grounded in your own experience.
+        <p className="text-[14px] font-semibold text-fg">Ready when you are</p>
+        <p className="mx-auto mt-1 max-w-[17rem] text-[11px] leading-relaxed text-fg-faint">
+          Press Start, then hold the listen button — or arm it — when the interviewer asks
+          something.
         </p>
       </div>
-      <div className="mx-auto w-full max-w-[15rem] space-y-1">
+
+      <div className="mx-auto w-full max-w-[17rem] space-y-1.5">
+        {steps.map((step) => (
+          <button
+            key={step.label}
+            type="button"
+            onClick={() => step.to && setView(step.to)}
+            className="no-drag flex w-full items-start gap-2.5 rounded-lg border border-line bg-surface px-2.5 py-2 text-left transition-colors hover:border-line-strong"
+          >
+            <span
+              className={`mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] ${
+                step.done ? 'bg-live/15 text-live' : 'border border-line-strong text-fg-faint'
+              }`}
+            >
+              {step.done ? '✓' : ''}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[12px] font-medium text-fg">{step.label}</span>
+              <span className="block text-[10px] leading-snug text-fg-faint">{step.hint}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className="mx-auto w-full max-w-[17rem] space-y-1">
         {[
           ['Start / stop', 'Ctrl ⇧ Space'],
+          ['Arm listening', 'Ctrl ⇧ A'],
           ['Hide window', 'Ctrl ⇧ H'],
           ['Regenerate', 'Ctrl ⇧ R'],
-          ['Fade out', 'Ctrl ⇧ O'],
         ].map(([action, keys]) => (
           <div key={keys} className="flex items-center justify-between gap-3">
             <span className="text-[10.5px] text-fg-faint">{action}</span>

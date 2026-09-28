@@ -2,17 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { AudioCapture } from './audio/capture'
 import { StatusBar, TitleBar } from './components/Chrome'
 import { AnswerPanel, QuestionPanel, TranscriptPanel } from './components/LivePanels'
+import { ListenControl } from './components/ListenControl'
 import { ProfileView } from './components/ProfileView'
 import { SettingsView } from './components/SettingsView'
 import { Button } from './components/primitives'
+import { applyTheme } from './lib/theme'
 import { useStore } from './state/store'
-import type { SessionConfig } from '@shared/types'
+import type { ListenMode, SessionConfig } from '@shared/types'
 
 export function App(): ReactNode {
   const store = useStore()
   const {
     view,
     sessionState,
+    listen,
     settings,
     question,
     answer,
@@ -60,6 +63,7 @@ export function App(): ReactNode {
       window.cue.on(PUSH.answerError, (p) => s.failAnswer(p.questionId, p.message)),
       window.cue.on(PUSH.streamStatus, (p) => s.patchStream(p.stream, p.status)),
       window.cue.on(PUSH.sessionState, (p) => s.setSessionState(p.state, p.error)),
+      window.cue.on(PUSH.listenState, (p) => s.setListen(p.indicator)),
       window.cue.on(PUSH.toast, (p) => s.showToast(p.level, p.message)),
     ]
     return () => off.forEach((fn) => fn())
@@ -87,6 +91,8 @@ export function App(): ReactNode {
       speculative: true,
       grounded: true,
       complexity: 'balanced',
+      listenMode: 'manual',
+      providerFallback: true,
     }
 
     // Audio first, and deliberately so: `getDisplayMedia` requires transient
@@ -130,18 +136,28 @@ export function App(): ReactNode {
     else if (state === 'stopped') void startSession()
   }, [startSession, stopSession])
 
+  // These only work with a live engine; give feedback instead of silently no-op'ing.
+  const requireSession = useCallback((result: Promise<{ ok: boolean }>): void => {
+    void result.then((r) => {
+      if (!r.ok) useStore.getState().showToast('warn', 'Press Start first — there is no live session yet.')
+    })
+  }, [])
+
   // --- global shortcuts (delivered from main) -------------------------------
   useEffect(() => {
     const { PUSH } = window.cue.channels
     return window.cue.on(PUSH.shortcut, ({ action }) => {
       if (action === 'toggle-listening') toggleSession()
-      else if (action === 'regenerate') void window.cue.regenerate()
+      else if (action === 'arm-listen') {
+        // Only meaningful mid-session and in manual mode; harmless otherwise.
+        if (useStore.getState().sessionState === 'running') window.cue.setListen('armed')
+      } else if (action === 'regenerate') requireSession(window.cue.regenerate())
       else if (action === 'clear') {
         useStore.getState().clearAll()
         void window.cue.clearSession()
       }
     })
-  }, [toggleSession])
+  }, [toggleSession, requireSession])
 
   // Tear the audio graph down on unload so device handles are always released.
   useEffect(() => {
@@ -149,6 +165,13 @@ export function App(): ReactNode {
     window.addEventListener('beforeunload', onUnload)
     return () => window.removeEventListener('beforeunload', onUnload)
   }, [])
+
+  // --- theme ----------------------------------------------------------------
+  // Re-apply whenever the authoritative UI settings change (initial load, or a
+  // change made in Settings).
+  useEffect(() => {
+    if (settings) applyTheme(settings.ui.theme, settings.ui.accent)
+  }, [settings?.ui.theme, settings?.ui.accent])
 
   // --- toast auto-dismiss ---------------------------------------------------
   useEffect(() => {
@@ -160,9 +183,20 @@ export function App(): ReactNode {
   const submitManual = (): void => {
     const text = manualQuestion.trim()
     if (!text) return
-    void window.cue.askManual(text)
+    requireSession(window.cue.askManual(text))
     setManualQuestion('')
   }
+
+  const changeListenMode = useCallback((mode: ListenMode): void => {
+    const current = useStore.getState().settings
+    if (!current) return
+    const session = { ...current.session, listenMode: mode }
+    // Optimistic local update, then persist; the engine picks it up live.
+    useStore.getState().setSettings({ ...current, session })
+    void window.cue.setSettings({ session }).then((next) => {
+      useStore.getState().setSettings(next)
+    })
+  }, [])
 
   return (
     <div className="flex h-full flex-col bg-base">
@@ -184,13 +218,21 @@ export function App(): ReactNode {
 
       {view === 'live' ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-2.5 py-2.5">
+          {sessionState === 'running' && settings ? (
+            <ListenControl
+              listenMode={settings.session.listenMode}
+              indicator={listen}
+              onChangeMode={changeListenMode}
+            />
+          ) : null}
+
           <QuestionPanel question={question} />
 
           <AnswerPanel
             answer={answer}
             sessionState={sessionState}
-            onRegenerate={() => void window.cue.regenerate()}
-            onNudge={(nudge) => void window.cue.regenerate(nudge)}
+            onRegenerate={() => requireSession(window.cue.regenerate())}
+            onNudge={(nudge) => requireSession(window.cue.regenerate(nudge))}
           />
 
           {settings?.ui.showTranscript ? (

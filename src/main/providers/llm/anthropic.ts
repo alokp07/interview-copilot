@@ -75,9 +75,21 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async prewarm(model: string): Promise<void> {
-    // Anthropic has no free GET endpoint that keeps a socket hot, so we warm it
-    // with a 1-token generation. Negligible cost, and it primes the TLS session.
-    await new Promise<void>((resolve) => {
+    // Warm the socket once now, then keep it hot on a single interval. The
+    // interval calls the bare warm request directly — never `prewarm` again — so
+    // there is no timer to save/restore and no race that could leak an interval.
+    await this.warmRequest(model)
+    if (this.warmTimer) clearInterval(this.warmTimer)
+    this.warmTimer = setInterval(() => void this.warmRequest(model), 60_000)
+    this.warmTimer.unref?.()
+  }
+
+  /**
+   * One warm-up POST. Anthropic has no free GET that keeps a socket hot, so we
+   * spend a 1-token generation — negligible cost, primes the TLS session.
+   */
+  private warmRequest(model: string): Promise<void> {
+    return new Promise<void>((resolve) => {
       const body = JSON.stringify({
         model: model || this.defaultModel,
         max_tokens: 1,
@@ -111,17 +123,6 @@ export class AnthropicProvider implements LLMProvider {
         resolve()
       }
     })
-    if (this.warmTimer) clearInterval(this.warmTimer)
-    this.warmTimer = setInterval(() => void this.prewarmQuiet(model), 60_000)
-    this.warmTimer.unref?.()
-  }
-
-  private async prewarmQuiet(model: string): Promise<void> {
-    const saved = this.warmTimer
-    this.warmTimer = null
-    await this.prewarm(model)
-    if (this.warmTimer) clearInterval(this.warmTimer)
-    this.warmTimer = saved
   }
 
   dispose(): void {

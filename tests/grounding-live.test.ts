@@ -67,6 +67,8 @@ const NARROW_CONFIG: SessionConfig = {
   speculative: true,
   grounded: true,
   complexity: 'simple',
+  listenMode: 'always',
+  providerFallback: true,
 }
 
 /**

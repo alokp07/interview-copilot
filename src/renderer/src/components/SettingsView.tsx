@@ -10,9 +10,28 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Field, Label, Select, TextInput, Toggle } from './primitives'
 import { useStore } from '../state/store'
 import { LLM_PROVIDERS, modelsFor } from '@shared/models'
-import type { AppSettings } from '@shared/types'
+import type { AccentColor, AppSettings } from '@shared/types'
 
 const PROVIDER_OPTIONS = LLM_PROVIDERS.map((p) => ({ value: p.id, label: p.label }))
+
+const THEME_OPTIONS = [
+  { value: 'system' as const, label: 'Follow system' },
+  { value: 'dark' as const, label: 'Dark' },
+  { value: 'light' as const, label: 'Light' },
+]
+
+const ACCENTS: Array<{ id: AccentColor; label: string; swatch: string }> = [
+  { id: 'blue', label: 'Blue', swatch: '#5b8cff' },
+  { id: 'violet', label: 'Violet', swatch: '#8b5cf6' },
+  { id: 'emerald', label: 'Emerald', swatch: '#10b981' },
+  { id: 'amber', label: 'Amber', swatch: '#f59e0b' },
+  { id: 'rose', label: 'Rose', swatch: '#f43f5e' },
+]
+
+const LISTEN_OPTIONS = [
+  { value: 'manual' as const, label: 'Manual — I press to listen' },
+  { value: 'always' as const, label: 'Always — answer every question' },
+]
 
 const CREDENTIAL_FIELDS: Array<{ key: string; label: string; provider: keyof CredentialFlags }> = [
   { key: 'DEEPGRAM_API_KEY', label: 'Deepgram (speech)', provider: 'deepgram' },
@@ -101,6 +120,63 @@ export function SettingsView(): ReactNode {
               onChange={(llmModel) => patch({ providers: { ...settings.providers, llmModel } })}
             />
           </Field>
+        </div>
+      </section>
+
+      <section>
+        <Label>Answering</Label>
+        <Field
+          label="When to answer"
+          hint="Manual keeps Cue silent until you hold the listen button or arm it (Ctrl+Shift+A) — so it never answers chit-chat or half-heard audio. Always answers every detected question."
+        >
+          <Select
+            value={settings.session.listenMode}
+            options={LISTEN_OPTIONS}
+            onChange={(listenMode) => patch({ session: { ...settings.session, listenMode } })}
+          />
+        </Field>
+        <div className="mt-1">
+          <Toggle
+            label="Fall back to another provider on failure"
+            hint="If the primary model fails before an answer starts, automatically retry with another provider you've configured."
+            checked={settings.session.providerFallback}
+            onChange={(providerFallback) =>
+              patch({ session: { ...settings.session, providerFallback } })
+            }
+          />
+        </div>
+      </section>
+
+      <section>
+        <Label>Appearance</Label>
+        <Field label="Theme">
+          <Select
+            value={settings.ui.theme}
+            options={THEME_OPTIONS}
+            onChange={(theme) => patch({ ui: { ...settings.ui, theme } })}
+          />
+        </Field>
+        <div className="mt-2">
+          <span className="mb-1.5 block text-[11px] font-medium text-fg-muted">Accent</span>
+          <div className="flex items-center gap-2">
+            {ACCENTS.map((a) => {
+              const active = settings.ui.accent === a.id
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  title={a.label}
+                  aria-label={a.label}
+                  aria-pressed={active}
+                  onClick={() => patch({ ui: { ...settings.ui, accent: a.id } })}
+                  className={`no-drag h-6 w-6 rounded-full transition-transform duration-100 hover:scale-110 ${
+                    active ? 'ring-2 ring-fg ring-offset-2 ring-offset-base' : ''
+                  }`}
+                  style={{ background: a.swatch }}
+                />
+              )
+            })}
+          </div>
         </div>
       </section>
 
@@ -242,7 +318,8 @@ export function SettingsView(): ReactNode {
         <Label>Shortcuts</Label>
         <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-[11px] text-fg-faint">
           {[
-            ['Start / stop listening', 'Ctrl+Shift+Space'],
+            ['Start / stop session', 'Ctrl+Shift+Space'],
+            ['Arm listening (next question)', 'Ctrl+Shift+A'],
             ['Hide / show window', 'Ctrl+Shift+H'],
             ['Regenerate answer', 'Ctrl+Shift+R'],
             ['Clear session', 'Ctrl+Shift+X'],

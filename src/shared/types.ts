@@ -240,6 +240,28 @@ export type AnswerComplexity = 'simple' | 'balanced' | 'advanced'
 /** Live rewrite request for the current answer. */
 export type AnswerNudge = 'simpler' | 'deeper'
 
+/**
+ * How the app decides *when* to answer.
+ *   • `always`  — every detected interviewer question is answered (the v1 behavior).
+ *   • `manual`  — Cue only answers when the candidate signals (push-to-listen), so it
+ *                 never fires blindly on chit-chat, mis-heard audio, or half-sentences.
+ */
+export type ListenMode = 'manual' | 'always'
+
+/**
+ * Runtime listening state the candidate drives in manual mode.
+ *   • `idle`    — not listening; interviewer turns feed memory but produce no answer.
+ *   • `armed`   — answer the *next* detected question, then fall back to `idle`.
+ *   • `holding` — answer every question while the button is physically held.
+ */
+export type ListenState = 'idle' | 'armed' | 'holding'
+
+/**
+ * What the UI shows about listening, resolved from mode + state by the engine so the
+ * renderer never has to recombine the two.
+ */
+export type ListenIndicator = 'off' | 'armed' | 'listening' | 'always'
+
 export interface SessionConfig {
   mode: InterviewMode
   /** Answer verbosity target, in words. */
@@ -253,6 +275,10 @@ export interface SessionConfig {
    */
   grounded: boolean
   complexity: AnswerComplexity
+  /** When to answer: push-to-listen (`manual`, the default) or answer everything (`always`). */
+  listenMode: ListenMode
+  /** On a hard generation failure, fall back to another configured LLM provider. */
+  providerFallback: boolean
 }
 
 export type SessionState = 'stopped' | 'starting' | 'running' | 'stopping'
@@ -272,6 +298,9 @@ export interface ProviderSettings {
   eotTimeoutMs: number
 }
 
+export type ThemePreference = 'system' | 'light' | 'dark'
+export type AccentColor = 'blue' | 'violet' | 'emerald' | 'amber' | 'rose'
+
 export interface UiSettings {
   alwaysOnTop: boolean
   /** Hides the window from screen-capture at the compositor level (Windows). */
@@ -279,6 +308,10 @@ export interface UiSettings {
   opacity: number
   showTranscript: boolean
   showLatency: boolean
+  /** Light/dark/follow-OS. */
+  theme: ThemePreference
+  /** Accent hue used across the UI. */
+  accent: AccentColor
 }
 
 export interface AppSettings {

@@ -24,6 +24,7 @@ import type {
   STTCapabilities,
 } from '@main/contracts/stt'
 import { AUDIO, type TurnPhase } from '@shared/types'
+import { isFatalCloseCode, isFatalFluxError } from '@main/providers/stt/flux-errors'
 
 const log = createLogger('stt:deepgram-flux')
 
@@ -32,6 +33,13 @@ const MODEL = 'flux-general-en'
 
 /** Reconnect backoff — fast at first, because a dropped socket means deafness. */
 const BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000]
+/**
+ * Give up after this many consecutive failed attempts (~40 s of backoff). A
+ * socket that connects and instantly drops — the classic signature of a key that
+ * is accepted at TCP but rejected at the protocol — would otherwise loop as
+ * `reconnecting` forever with no visible dead end.
+ */
+const MAX_RECONNECT_ATTEMPTS = 10
 
 interface FluxTurnInfo {
   type: 'TurnInfo'
@@ -70,6 +78,8 @@ class FluxSession implements STTSession {
 
   private ws: WebSocket | null = null
   private closedByUs = false
+  /** Set once we stop retrying for good (auth failure or too many attempts). */
+  private terminated = false
   private attempt = 0
   private reconnectTimer: NodeJS.Timeout | null = null
   /**
@@ -154,11 +164,19 @@ class FluxSession implements STTSession {
     // Typed structurally: Node's lib has no DOM `CloseEvent`.
     ws.addEventListener('close', (event: { code?: number }) => {
       this.ws = null
-      if (this.closedByUs) {
-        this.callbacks.onStateChange('closed')
+      if (this.closedByUs || this.terminated) {
+        if (this.closedByUs) this.callbacks.onStateChange('closed')
         return
       }
-      log.warn(`${this.stream}: closed (code=${event.code})`)
+      const code = event.code
+      if (isFatalCloseCode(code)) {
+        this.fail(
+          `connection rejected (code ${code}) — check the Deepgram API key and account status`,
+          true
+        )
+        return
+      }
+      log.warn(`${this.stream}: closed (code=${code})`)
       this.scheduleReconnect()
     })
   }
@@ -179,7 +197,8 @@ class FluxSession implements STTSession {
 
     if (msg.type === 'Error') {
       const e = msg as FluxError
-      this.fail(`${e.code ?? 'error'}: ${e.description ?? 'unknown'}`)
+      // Auth / quota / bad-request errors won't fix themselves on reconnect.
+      this.fail(`${e.code ?? 'error'}: ${e.description ?? 'unknown'}`, isFatalFluxError(e.code, e.description))
       return
     }
 
@@ -200,13 +219,27 @@ class FluxSession implements STTSession {
     })
   }
 
-  private fail(detail: string): void {
-    log.error(`${this.stream}: ${detail}`)
-    this.callbacks.onStateChange('error', detail)
+  private fail(detail: string, terminal = false): void {
+    log.error(`${this.stream}: ${detail}${terminal ? ' (giving up)' : ''}`)
+    if (terminal) {
+      this.terminated = true
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer)
+        this.reconnectTimer = null
+      }
+    }
+    this.callbacks.onStateChange('error', detail, terminal)
   }
 
   private scheduleReconnect(): void {
-    if (this.closedByUs || this.reconnectTimer) return
+    if (this.closedByUs || this.terminated || this.reconnectTimer) return
+    if (this.attempt >= MAX_RECONNECT_ATTEMPTS) {
+      this.fail(
+        `lost the connection and could not get it back after ${this.attempt} attempts`,
+        true
+      )
+      return
+    }
     const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)] ?? 8000
     this.attempt++
     this.callbacks.onStateChange('reconnecting', `retry in ${delay}ms`)

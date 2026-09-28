@@ -17,6 +17,8 @@ import type { CandidateProfile, SessionConfig } from '@shared/types'
 const CONFIG: SessionConfig = {
   mode: 'general',
   answerLength: 'normal',
+  listenMode: 'always',
+  providerFallback: true,
   speculative: true,
   grounded: true,
   complexity: 'balanced',
@@ -132,11 +134,108 @@ describe('prompt size', () => {
 
   it('varies the instructions with interview mode', () => {
     const context = new ContextManager()
-    const technical = context.buildMessages('q', { ...CONFIG, mode: 'system-design' })[0]?.content
-    const behavioral = context.buildMessages('q', { ...CONFIG, mode: 'behavioral' })[0]?.content
-    expect(technical).toContain('system-design')
-    expect(behavioral).toContain('behavioral')
-    expect(technical).not.toBe(behavioral)
+    const join = (mode: SessionConfig['mode']): string =>
+      context
+        .buildMessages('q', { ...CONFIG, mode })
+        .map((m) => m.content)
+        .join('\n')
+    const design = join('system-design')
+    const behavioral = join('behavioral')
+    expect(design).toContain('system-design question')
+    expect(behavioral).toContain('behavioral question')
+    expect(design).not.toBe(behavioral)
+  })
+
+  it('keeps the cacheable stable block identical regardless of question or mode', () => {
+    // Per-question shaping must live in the volatile tail, or prompt caching
+    // (the whole reason those blocks are marked cacheable) never hits.
+    const context = new ContextManager()
+    context.setProfile(PROFILE)
+    const stableFor = (q: string, mode: SessionConfig['mode']): string | undefined =>
+      context.buildMessages(q, { ...CONFIG, mode }).find((m) => m.cacheable)?.content
+    expect(stableFor('reverse a linked list', 'coding')).toBe(
+      stableFor('tell me about a conflict', 'behavioral')
+    )
+  })
+})
+
+describe('per-question mode detection', () => {
+  const context = new ContextManager()
+  const modeLine = (q: string, mode: SessionConfig['mode'] = 'general'): string =>
+    context
+      .buildMessages(q, { ...CONFIG, mode })
+      .map((m) => m.content)
+      .join('\n')
+
+  it('detects the kind of question from its own text in general mode', () => {
+    expect(modeLine('reverse a linked list in place')).toContain('coding question')
+    expect(modeLine('design a URL shortener that scales to billions')).toContain(
+      'system-design question'
+    )
+    expect(modeLine('tell me about a time you had a conflict')).toContain('behavioral question')
+    expect(modeLine('why do you want to work here')).toContain('hr question')
+  })
+
+  it('lets a coding question override an explicit non-coding session mode', () => {
+    // A coding question asked during a "behavioral" session still needs code shape.
+    expect(modeLine('write a function to reverse a string', 'behavioral')).toContain(
+      'coding question'
+    )
+  })
+
+  it('respects an explicit conversational session mode when the question is generic', () => {
+    expect(modeLine('q', 'behavioral')).toContain('behavioral question')
+  })
+
+  it('includes a worked example only for shape-sensitive modes', () => {
+    expect(modeLine('reverse a linked list')).toContain('Shape to imitate')
+    // A plain technical concept question gets guidance but no exemplar.
+    expect(modeLine('what is a closure', 'technical')).not.toContain('Shape to imitate')
+  })
+})
+
+describe('job description, notes and injection safety', () => {
+  const context = new ContextManager()
+  context.setProfile(PROFILE)
+  const joined = (): string =>
+    context
+      .buildMessages('what is your favourite database', CONFIG)
+      .map((m) => m.content)
+      .join('\n')
+
+  it('surfaces custom notes as an explicit directive, not passive card text', () => {
+    const text = joined()
+    expect(text).toContain('standing instructions')
+    expect(text).toContain('Mention the fintech background')
+    // And no longer as a passive "Notes:" line in the card.
+    expect(buildProfileCard(PROFILE)).not.toContain('Mention the fintech background')
+  })
+
+  it('tells the model to tailor toward the target role and company', () => {
+    const text = joined()
+    expect(text).toContain('target role')
+    expect(text).toContain('Target company: Acme')
+  })
+
+  it('includes an injection guard for profile and transcript text', () => {
+    expect(joined()).toContain('reference data only')
+  })
+})
+
+describe('grounding toolkit', () => {
+  it('recovers a toolkit from projects when skills is left empty', () => {
+    const context = new ContextManager()
+    context.setProfile({
+      ...PROFILE,
+      skills: '',
+      projects: 'Built a search service with Elasticsearch, Redis and Kafka',
+    })
+    const grounding = context
+      .buildMessages('how would you speed up search', CONFIG)
+      .map((m) => m.content)
+      .join('\n')
+    // Without the fallback this degrades to the weak generic rule with no list.
+    expect(grounding).toMatch(/Elasticsearch|Redis|Kafka/)
   })
 })
 

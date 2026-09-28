@@ -30,6 +30,8 @@ import type {
   AnswerError,
   AnswerNudge,
   DetectedQuestion,
+  ListenIndicator,
+  ListenState,
   SessionConfig,
   Speaker,
   TranscriptLine,
@@ -48,6 +50,13 @@ const DEDUPE_SIMILARITY = 0.9
 /** First token goes out immediately; the rest coalesce to one frame's worth. */
 const DELTA_FLUSH_MS = 25
 
+/** A provider the engine can fall back to when the primary fails outright. */
+export interface LlmChoice {
+  llm: LLMProvider
+  model: string
+  name: string
+}
+
 export interface TurnEngineDeps {
   llm: LLMProvider
   /** Cheap model for off-critical-path summarization. */
@@ -56,6 +65,12 @@ export interface TurnEngineDeps {
   context: ContextManager
   config: SessionConfig
   emit: TurnEngineEvents
+  /**
+   * Given the failing provider's name, return another configured provider to try
+   * (or null). Only consulted before any token has shipped, so a fallback never
+   * restarts an answer mid-sentence.
+   */
+  resolveFallback?: (currentProviderName: string) => LlmChoice | null
 }
 
 export interface TurnEngineEvents {
@@ -66,6 +81,9 @@ export interface TurnEngineEvents {
   answerDone(payload: AnswerDone): void
   answerCancelled(payload: AnswerCancelled): void
   answerError(payload: AnswerError): void
+  listenState(indicator: ListenIndicator): void
+  /** Optional: surface a main-process condition (e.g. a provider fallback) to the UI. */
+  toast?(payload: { level: 'info' | 'warn' | 'error'; message: string }): void
   trace(trace: TurnTrace): void
 }
 
@@ -99,6 +117,12 @@ export class TurnEngine {
   private pendingSpeculation: PendingSpeculation | null = null
   private lastQuestion: { text: string; id: string } | null = null
   private recentQuestions: Array<{ norm: string; at: number }> = []
+  /**
+   * Push-to-listen state, driven from the UI in manual mode. In `always` mode it
+   * is ignored — the gate below is open regardless. Kept out of `config` because
+   * it changes many times a second (a held button) and must not churn settings.
+   */
+  private listen: ListenState = 'idle'
   readonly stats = new LatencyStats()
 
   /** Per-stream working state for the current turn. */
@@ -110,7 +134,55 @@ export class TurnEngine {
   constructor(private deps: TurnEngineDeps) {}
 
   updateConfig(config: SessionConfig): void {
+    const modeChanged = this.deps.config.listenMode !== config.listenMode
     this.deps.config = config
+    // Switching to `always` opens the gate; switching to `manual` re-arms the
+    // idle default. Either way the indicator the UI shows may have changed.
+    if (modeChanged) this.emitListenState()
+  }
+
+  // -------------------------------------------------------------------------
+  // Push-to-listen
+  // -------------------------------------------------------------------------
+
+  /** Whether an interviewer turn is currently allowed to produce an answer. */
+  private get isListening(): boolean {
+    return this.deps.config.listenMode === 'always' || this.listen !== 'idle'
+  }
+
+  /** Resolved state for the UI, so the renderer never recombines mode + state. */
+  private get listenIndicator(): ListenIndicator {
+    if (this.deps.config.listenMode === 'always') return 'always'
+    if (this.listen === 'holding') return 'listening'
+    if (this.listen === 'armed') return 'armed'
+    return 'off'
+  }
+
+  private emitListenState(): void {
+    this.deps.emit.listenState(this.listenIndicator)
+  }
+
+  /** Re-broadcast the current indicator — used right after a session starts. */
+  notifyListenState(): void {
+    this.emitListenState()
+  }
+
+  setListen(state: ListenState): void {
+    if (this.listen === state) return
+    this.listen = state
+    this.emitListenState()
+  }
+
+  /**
+   * Consume a one-shot arm the moment we commit to answering a real (confirmed)
+   * question, dropping back to idle. Holding is never consumed — it ends only
+   * when the button is released.
+   */
+  private consumeArm(): void {
+    if (this.listen === 'armed') {
+      this.listen = 'idle'
+      this.emitListenState()
+    }
   }
 
   updateModels(answerModel: string, summaryModel: string): void {
@@ -188,6 +260,9 @@ export class TurnEngine {
 
       case 'eager-end': {
         if (!this.deps.config.speculative) return
+        // Manual mode, not listening: don't even speculate. Memory still records
+        // the turn on `end` below, so context is never lost between presses.
+        if (!this.isListening) return
         state.eagerText = event.transcript
         state.eagerAt = event.observedAt
         this.considerQuestion(event.transcript, {
@@ -289,6 +364,11 @@ export class TurnEngine {
     raw: string,
     timing: { speculative: boolean; speechStart: number; eagerAt?: number; speechEnd?: number }
   ): void {
+    // Push-to-listen gate. In manual mode an interviewer turn only becomes an
+    // answer while armed or held; otherwise it silently feeds memory and stops
+    // here. `askManual`/`regenerate` bypass this by never calling in.
+    if (!this.isListening) return
+
     const gateStart = now()
     const verdict = classify(raw)
 
@@ -318,6 +398,11 @@ export class TurnEngine {
     if (timing.speechEnd) trace.mark('speechEnd', timing.speechEnd)
     trace.mark('gated', gateStart)
 
+    // A confirmed question is the one an arm was waiting for — consume it now so
+    // the candidate isn't answered a second time until they re-arm. Speculative
+    // gating waits for confirmation via `confirm()` so a dropped guess keeps the arm.
+    if (!timing.speculative) this.consumeArm()
+
     this.lastQuestion = { text: verdict.text, id: questionId }
     this.recentQuestions.push({ norm: normalizeQuestion(verdict.text), at: Date.now() })
 
@@ -335,6 +420,8 @@ export class TurnEngine {
 
   /** Tell the UI a question is no longer a guess, without disturbing the answer. */
   private confirm(questionId: string, questionText: string): void {
+    // A promoted speculation is a confirmed answer to the awaited question.
+    this.consumeArm()
     this.deps.emit.question({
       id: questionId,
       text: questionText,
@@ -433,43 +520,86 @@ export class TurnEngine {
     const messages = this.deps.context.buildMessages(questionText, this.deps.config, nudge)
     const maxTokens = this.deps.config.answerLength === 'detailed' ? 420 : 260
 
-    trace.mark('llmRequest')
-    trace.reset('model', this.deps.answerModel)
+    // The primary provider, plus one configured fallback if the primary dies
+    // before shipping a token. Resolved up front so the list is stable.
+    const providers: LlmChoice[] = [
+      { llm: this.deps.llm, model: this.deps.answerModel, name: this.deps.llm.name },
+    ]
+    if (this.deps.config.providerFallback && this.deps.resolveFallback) {
+      const fb = this.deps.resolveFallback(this.deps.llm.name)
+      if (fb && fb.name !== this.deps.llm.name) providers.push(fb)
+    }
 
-    // At most one retry, and only before any token has shipped — the user must
-    // never watch an answer restart mid-sentence.
-    for (let attempt = 0; attempt <= 1; attempt++) {
-      const outcome = await this.runStream(generation, messages, maxTokens)
-      if (outcome !== 'retry') return
-      log.warn(`retrying generation for ${questionId}`)
+    trace.mark('llmRequest')
+
+    let lastError: { message: string; retryable: boolean } | null = null
+
+    for (let p = 0; p < providers.length; p++) {
+      const provider = providers[p]!
+      trace.reset('model', provider.model)
+
+      // At most one retry per provider, and only before any token has shipped —
+      // the user must never watch an answer restart mid-sentence.
+      for (let attempt = 0; attempt <= 1; attempt++) {
+        const outcome = await this.runStream(generation, messages, maxTokens, provider)
+        if (outcome === 'done' || outcome === 'abandoned') return
+        if (outcome === 'retry') {
+          log.warn(`retrying generation for ${questionId} on ${provider.name}`)
+          continue
+        }
+        // A concrete failure this provider can't recover from.
+        lastError = outcome.failed
+        break
+      }
+
+      // Once a token has shipped we can't switch providers without restarting the
+      // answer on screen, so a mid-stream failure is terminal here.
+      if (generation.firstTokenSent) break
+
+      const next = providers[p + 1]
+      if (next) {
+        log.warn(`provider ${provider.name} failed; falling back to ${next.name}`)
+        this.deps.emit.toast?.({
+          level: 'warn',
+          message: `${provider.name} failed — switching to ${next.name}.`,
+        })
+        // Clean slate for the fallback attempt.
+        generation.text = ''
+        generation.pending = ''
+      }
     }
 
     if (this.active === generation) {
       this.active = null
       this.deps.emit.answerError({
         questionId,
-        message: 'The model failed twice in a row. Check the connection or switch provider.',
-        retryable: true,
+        message:
+          lastError?.message ??
+          'The model failed. Check the connection or switch provider.',
+        retryable: lastError?.retryable ?? true,
       })
     }
   }
 
   /**
-   * One attempt at a generation. Returns `retry` only for transient failures
-   * that happened before any output reached the user.
+   * One attempt at a generation against a single provider. Returns `retry` for a
+   * transient failure before any output reached the user, `abandoned` if the
+   * generation was cancelled underneath us, `done` on success, or a `failed`
+   * result the caller decides how to surface (error or fall back).
    */
   private async runStream(
     generation: ActiveGeneration,
     messages: ReturnType<ContextManager['buildMessages']>,
-    maxTokens: number
-  ): Promise<'done' | 'retry' | 'abandoned'> {
+    maxTokens: number,
+    provider: LlmChoice
+  ): Promise<'done' | 'retry' | 'abandoned' | { failed: { message: string; retryable: boolean } }> {
     const { questionId, controller, trace } = generation
     let sawTerminal = false
 
     try {
-      for await (const event of this.deps.llm.stream({
+      for await (const event of provider.llm.stream({
         messages,
-        model: this.deps.answerModel,
+        model: provider.model,
         maxTokens,
         // Grounded mode is a constraint-following task, and adherence improves
         // at lower sampling entropy; the voice survives fine at 0.35.
@@ -500,13 +630,7 @@ export class TurnEngine {
             return 'retry'
           }
           log.error(`llm error: ${event.message}`)
-          if (this.active === generation) this.active = null
-          this.deps.emit.answerError({
-            questionId,
-            message: event.message ?? 'Generation failed',
-            retryable: Boolean(event.retryable),
-          })
-          return 'done'
+          return { failed: { message: event.message ?? 'Generation failed', retryable: Boolean(event.retryable) } }
         }
 
         if (event.type === 'done') {
@@ -520,13 +644,7 @@ export class TurnEngine {
       log.error('generation threw', err)
       if (!generation.firstTokenSent) return 'retry'
       this.flushDelta(generation)
-      if (this.active === generation) this.active = null
-      this.deps.emit.answerError({
-        questionId,
-        message: (err as Error).message,
-        retryable: true,
-      })
-      return 'done'
+      return { failed: { message: (err as Error).message, retryable: true } }
     }
 
     // The stream ended without a terminal event. If we got usable text, treat
@@ -627,6 +745,8 @@ export class TurnEngine {
     this.turnState.clear()
     this.recentQuestions = []
     this.lastQuestion = null
+    this.listen = 'idle'
+    this.emitListenState()
     this.stats.reset()
   }
 }

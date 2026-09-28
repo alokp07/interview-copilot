@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   classify,
+  classifyType,
   extractLatestQuestion,
   normalizeQuestion,
   similarity,
@@ -186,5 +187,34 @@ describe('similarity', () => {
 
   it('normalizes punctuation and case', () => {
     expect(normalizeQuestion('Why  MongoDB??')).toBe('why mongodb')
+  })
+})
+
+describe('question-type detection', () => {
+  const cases: Array<[string, ReturnType<typeof classifyType>]> = [
+    ['write a function that reverses a string', 'coding'],
+    ['reverse a linked list and give the time complexity', 'coding'],
+    ['design a system that handles millions of requests', 'system-design'],
+    ['how would you design a scalable notification service', 'system-design'],
+    ['tell me about a time you disagreed with a teammate', 'behavioral'],
+    ['how did you handle a difficult stakeholder', 'behavioral'],
+    ['why do you want to work here', 'hr'],
+    ['what is your greatest weakness', 'hr'],
+    ['what is the difference between a process and a thread', 'technical'],
+    ['how does the event loop work', 'technical'],
+  ]
+
+  for (const [text, expected] of cases) {
+    it(`classifies "${text}" as ${expected}`, () => {
+      expect(classifyType(text)).toBe(expected)
+    })
+  }
+
+  it('falls back to general when nothing specific fits', () => {
+    expect(classifyType('so, anything else on that')).toBe('general')
+  })
+
+  it('exposes the detected type on the gate result', () => {
+    expect(classify('write a function to sort an array').type).toBe('coding')
   })
 })

@@ -40,6 +40,54 @@
   --radius-card: 10px;
 }
 
+/*
+  Theming. The @theme block above is the dark default and generates the utility
+  classes (bg-base, text-fg, …), which all resolve to these `--color-*` vars at
+  runtime. Switching a theme is therefore just redefining the vars under a
+  higher-specificity selector — no utility class ever changes. `applyTheme` in
+  the renderer sets data-theme ('light'|'dark', system resolved in JS) and
+  data-accent on <html>.
+*/
+:root[data-theme='light'] {
+  --color-base: #eef1f5;
+  --color-surface: #ffffff;
+  --color-raised: #ffffff;
+  --color-overlay: #e6eaf1;
+  --color-line: #dee2ea;
+  --color-line-strong: #c6cdd8;
+
+  --color-fg: #191c24;
+  --color-fg-muted: #495060;
+  --color-fg-faint: #79808f;
+
+  --color-live: #059669;
+  --color-warn: #b45309;
+  --color-danger: #dc2626;
+  --color-spec: #7c3aed;
+}
+
+/* Accent hue — independent of light/dark, chosen in Settings. */
+:root[data-accent='blue'] {
+  --color-accent: #5b8cff;
+  --color-accent-soft: #7ba3ff;
+}
+:root[data-accent='violet'] {
+  --color-accent: #8b5cf6;
+  --color-accent-soft: #a78bfa;
+}
+:root[data-accent='emerald'] {
+  --color-accent: #10b981;
+  --color-accent-soft: #34d399;
+}
+:root[data-accent='amber'] {
+  --color-accent: #f59e0b;
+  --color-accent-soft: #fbbf24;
+}
+:root[data-accent='rose'] {
+  --color-accent: #f43f5e;
+  --color-accent-soft: #fb7185;
+}
+
 * {
   box-sizing: border-box;
   min-width: 0;

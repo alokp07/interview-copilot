@@ -34,6 +34,8 @@ const DEMO_SETTINGS: AppSettings = {
     opacity: 1,
     showTranscript: true,
     showLatency: true,
+    theme: 'dark',
+    accent: 'blue',
   },
   session: {
     mode: 'general',
@@ -41,6 +43,8 @@ const DEMO_SETTINGS: AppSettings = {
     speculative: true,
     grounded: true,
     complexity: 'balanced',
+    listenMode: 'manual',
+    providerFallback: true,
   },
 }
 
@@ -62,9 +66,17 @@ export function installDevBridge(): void {
     answerError: 'push:answer-error',
     streamStatus: 'push:stream-status',
     sessionState: 'push:session-state',
+    listenState: 'push:listen-state',
     trace: 'push:trace',
     toast: 'push:toast',
     shortcut: 'push:shortcut',
+  }
+
+  const listenIndicator = (state: 'idle' | 'armed' | 'holding'): string => {
+    if (settings.session.listenMode === 'always') return 'always'
+    if (state === 'holding') return 'listening'
+    if (state === 'armed') return 'armed'
+    return 'off'
   }
 
   let profile: CandidateProfile = {
@@ -149,9 +161,13 @@ export function installDevBridge(): void {
       emit(PUSH.sessionState, { state: 'starting' })
       later(400, () => {
         emit(PUSH.sessionState, { state: 'running' })
+        emit(PUSH.listenState, { indicator: listenIndicator('idle') })
         playDemo()
       })
       return { ok: true }
+    },
+    setListen: (state: 'idle' | 'armed' | 'holding') => {
+      emit(PUSH.listenState, { indicator: listenIndicator(state) })
     },
     stopSession: async () => {
       timers.forEach(clearTimeout)
@@ -242,6 +258,7 @@ export function installDevBridge(): void {
   if (params.has('demo')) {
     setTimeout(() => {
       emit(PUSH.sessionState, { state: 'running' })
+      emit(PUSH.listenState, { indicator: listenIndicator('idle') })
       playDemo()
     }, 250)
   }

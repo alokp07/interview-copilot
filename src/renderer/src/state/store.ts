@@ -12,6 +12,7 @@ import {
   type CandidateProfile,
   type CredentialStatus,
   type DetectedQuestion,
+  type ListenIndicator,
   type SessionState,
   type StreamId,
   type StreamStatus,
@@ -40,6 +41,8 @@ interface Store {
   view: View
   sessionState: SessionState
   sessionError: string | null
+  /** Resolved push-to-listen indicator from the engine (off/armed/listening/always). */
+  listen: ListenIndicator
 
   streams: Record<StreamId, StreamStatus>
   interim: Record<'interviewer' | 'candidate', string>
@@ -57,6 +60,7 @@ interface Store {
 
   setView: (view: View) => void
   setSessionState: (state: SessionState, error?: string) => void
+  setListen: (indicator: ListenIndicator) => void
   patchStream: (stream: StreamId, patch: Partial<StreamStatus>) => void
   setInterim: (who: 'interviewer' | 'candidate', text: string) => void
   addTranscript: (line: TranscriptLine) => void
@@ -88,6 +92,7 @@ export const useStore = create<Store>((set) => ({
   view: 'live',
   sessionState: 'stopped',
   sessionError: null,
+  listen: 'off',
 
   streams: { system: emptyStreamStatus(), mic: emptyStreamStatus() },
   interim: { interviewer: '', candidate: '' },
@@ -105,7 +110,15 @@ export const useStore = create<Store>((set) => ({
   setView: (view) => set({ view }),
 
   setSessionState: (sessionState, error) =>
-    set({ sessionState, sessionError: error ?? null }),
+    // A stopped session is listening to nothing; clear the indicator so the UI
+    // never shows a stale "armed"/"always" after Stop.
+    set({
+      sessionState,
+      sessionError: error ?? null,
+      ...(sessionState === 'stopped' ? { listen: 'off' as ListenIndicator } : {}),
+    }),
+
+  setListen: (listen) => set({ listen }),
 
   patchStream: (stream, patch) =>
     set((s) => ({ streams: { ...s.streams, [stream]: { ...s.streams[stream], ...patch } } })),

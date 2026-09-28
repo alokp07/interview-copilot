@@ -17,7 +17,7 @@
  * as a bonus signal, never a requirement.
  */
 
-import type { QuestionConfidence } from '@shared/types'
+import type { InterviewMode, QuestionConfidence } from '@shared/types'
 
 export interface GateResult {
   isQuestion: boolean
@@ -25,6 +25,8 @@ export interface GateResult {
   reason: string
   /** The question text after interruption/self-correction cleanup. */
   text: string
+  /** Best-guess kind of question, so the answer can be shaped per-question. */
+  type: InterviewMode
 }
 
 /** Wh-words and their conversational cousins. */
@@ -96,6 +98,41 @@ const CORRECTION_MARKERS =
 const FILLER_PREFIX =
   /^(?:so|and|but|um+|uh+|er+|ah+|well|now|okay|ok|alright|right|yeah|like|i mean|you know|basically|just)\b[\s,]*/i
 
+// ---------------------------------------------------------------------------
+// Question-type detection
+//
+// Same philosophy as the gate: local regex, microseconds, no LLM. The point is
+// to shape *this* answer (a coding question wants steps + complexity; a
+// behavioral one wants a first-person story), instead of applying one session-
+// wide mode to every question. Precedence runs most-specific first.
+// ---------------------------------------------------------------------------
+
+const CODING_CUES =
+  /\b(write (?:a|an|some)?\s?(?:function|method|code|program|query)|implement (?:a|an)|reverse (?:a|the)|sort (?:a|an|the)|time complexity|space complexity|big[- ]?o|leetcode|algorithm|recursion|iterate|linked list|binary (?:tree|search)|hash ?map|array|substring|palindrome|fizzbuzz|two sum|traverse|pseudo ?code|edge cases?|brute force|optimi[sz]e (?:this|the|your) (?:code|solution|function))\b/i
+
+const SYSTEM_DESIGN_CUES =
+  /\b(design (?:a|an) (?:system|service|api|platform|app|feature|url|website|.*(?:system|service))|system design|scal(?:e|able|ability|ing)|high availability|load balanc|throughput|shard|partition(?:ing)?|microservices?|distributed|message queue|rate limit|caching layer|database schema|data model|consistency|replication|fault toleran|architecture|handle (?:millions|billions|\d+[mk]?\+? (?:users|requests|qps)))\b/i
+
+const BEHAVIORAL_CUES =
+  /\b(tell me about a time|describe a (?:time|situation|challenge)|give me an example of (?:a|when)|walk me through a (?:time|situation)|a time when you|how did you (?:handle|deal|approach|resolve)|conflict|disagree(?:ment|d)?|difficult (?:person|teammate|situation|coworker)|challeng(?:e|ing) (?:you|situation)|proud of|biggest (?:failure|mistake|achievement)|made a mistake|missed a deadline|under pressure|led a|leadership|mentored|feedback you)\b/i
+
+const HR_CUES =
+  /\b(why (?:do you want to|this company|should we hire|are you (?:interested|looking|leaving))|salary|compensation|expected ctc|notice period|relocat|where do you see yourself|your (?:greatest )?(?:strength|weakness)|strengths? and weakness|why are you leaving|career goals?|work[- ]life|willing to)\b/i
+
+const TECHNICAL_CUES =
+  /\b(what is|what are|how does|how do|explain|difference between|what happens when|when would you use|pros and cons|tradeoffs?|why (?:use|would you use|is|do)|define|compare)\b/i
+
+/** Local best-guess of the question kind. Returns `general` when nothing fits. */
+export function classifyType(rawText: string): InterviewMode {
+  const text = extractLatestQuestion(rawText) || rawText
+  if (CODING_CUES.test(text)) return 'coding'
+  if (SYSTEM_DESIGN_CUES.test(text)) return 'system-design'
+  if (BEHAVIORAL_CUES.test(text)) return 'behavioral'
+  if (HR_CUES.test(text)) return 'hr'
+  if (TECHNICAL_CUES.test(text)) return 'technical'
+  return 'general'
+}
+
 export function normalizeQuestion(text: string): string {
   return text
     .toLowerCase()
@@ -141,12 +178,14 @@ export function classify(rawText: string): GateResult {
   const text = extractLatestQuestion(rawText)
   const trimmed = text.trim()
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length
+  const type = classifyType(trimmed)
 
   const reject = (reason: string): GateResult => ({
     isQuestion: false,
     confidence: 'low',
     reason,
     text: trimmed,
+    type,
   })
 
   if (wordCount === 0) return reject('empty')
@@ -170,7 +209,7 @@ export function classify(rawText: string): GateResult {
   if (trimmed.includes('?')) signals.push('question-mark')
 
   if (signals.length >= 2) {
-    return { isQuestion: true, confidence: 'high', reason: signals.join('+'), text: trimmed }
+    return { isQuestion: true, confidence: 'high', reason: signals.join('+'), text: trimmed, type }
   }
   if (signals.length === 1) {
     // A lone wh-word or imperative prompt with enough substance is a question.
@@ -180,6 +219,7 @@ export function classify(rawText: string): GateResult {
       confidence: strong ? 'high' : 'medium',
       reason: signals[0]!,
       text: trimmed,
+      type,
     }
   }
 
@@ -196,7 +236,7 @@ export function classify(rawText: string): GateResult {
   // landed one word under the old bar. Acknowledgements and backchannel are
   // caught by name above, so the extra word costs little.
   if (wordCount >= 5) {
-    return { isQuestion: true, confidence: 'low', reason: 'substantial-utterance', text: trimmed }
+    return { isQuestion: true, confidence: 'low', reason: 'substantial-utterance', text: trimmed, type }
   }
 
   return reject('no-signal')

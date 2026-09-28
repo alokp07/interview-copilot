@@ -14,6 +14,8 @@ import type {
   CandidateProfile,
   CredentialStatus,
   DetectedQuestion,
+  ListenIndicator,
+  ListenState,
   SessionConfig,
   SessionState,
   StreamId,
@@ -27,6 +29,12 @@ export const SEND = {
   /** Hot path: one 2560-byte linear16 frame every 80 ms, per stream. */
   audioFrame: 'audio:frame',
   captureState: 'audio:capture-state',
+  /**
+   * Push-to-listen control. `send`, not `invoke`: a hold button toggles this on
+   * pointer down/up and must feel instant — a reply round-trip would add lag to
+   * the exact gesture the candidate uses mid-sentence.
+   */
+  setListen: 'listen:set',
 } as const
 
 /** Renderer → main, request/response. */
@@ -68,6 +76,7 @@ export const PUSH = {
   answerError: 'push:answer-error',
   streamStatus: 'push:stream-status',
   sessionState: 'push:session-state',
+  listenState: 'push:listen-state',
   trace: 'push:trace',
   toast: 'push:toast',
   shortcut: 'push:shortcut',
@@ -96,9 +105,14 @@ export interface ToastPayload {
 export type ShortcutAction =
   | 'toggle-visibility'
   | 'toggle-listening'
+  | 'arm-listen'
   | 'regenerate'
   | 'clear'
   | 'cycle-opacity'
+
+export interface SetListenPayload {
+  state: ListenState
+}
 
 /** Everything main can push, keyed by channel, for a typed `on()` in preload. */
 export interface PushMap {
@@ -111,6 +125,7 @@ export interface PushMap {
   [PUSH.answerError]: AnswerError
   [PUSH.streamStatus]: { stream: StreamId; status: Partial<StreamStatus> }
   [PUSH.sessionState]: { state: SessionState; error?: string }
+  [PUSH.listenState]: { indicator: ListenIndicator }
   [PUSH.trace]: TurnTrace
   [PUSH.toast]: ToastPayload
   [PUSH.shortcut]: { action: ShortcutAction }

@@ -10,12 +10,16 @@
 
 import { createLogger } from '@main/core/logger'
 import { getLlmProvider, getSttProvider } from '@main/providers/factory'
+import { credentialStatus } from '@main/config/credentials'
 import type { STTSession } from '@main/contracts/stt'
+import type { LlmChoice } from '@main/interview/turn-engine'
+import type { ToastPayload } from '@shared/ipc'
 import { ContextManager } from '@main/interview/context-manager'
 import { TurnEngine, type TurnEngineEvents } from '@main/interview/turn-engine'
 import { getSettings } from '@main/config/settings'
 import type {
   CandidateProfile,
+  ListenState,
   SessionConfig,
   SessionState,
   StreamId,
@@ -39,6 +43,8 @@ export const SUMMARY_MODELS: Record<string, string> = {
 export interface SessionEvents extends TurnEngineEvents {
   streamStatus(stream: StreamId, status: Partial<StreamStatus>): void
   sessionState(state: SessionState, error?: string): void
+  /** Surface a main-process condition (STT/LLM failure, provider fallback) to the UI. */
+  toast(payload: ToastPayload): void
 }
 
 export class InterviewSession {
@@ -97,6 +103,7 @@ export class InterviewSession {
       context: this.context,
       config,
       emit: this.events,
+      resolveFallback: (currentName) => this.resolveFallback(currentName),
     })
 
     // Keyterms bias the recognizer toward the candidate's own stack — a
@@ -120,11 +127,21 @@ export class InterviewSession {
         },
         {
           onTurn: (event) => this.engine?.handleTurn(event),
-          onStateChange: (transport, detail) =>
+          onStateChange: (transport, detail, terminal) => {
             this.events.streamStatus(stream, {
               transport: transport as TransportState,
               ...(detail ? { error: detail } : {}),
-            }),
+            })
+            // A terminal transcription failure is silent otherwise — the audio
+            // meters keep moving while nothing is ever transcribed. Say so.
+            if (terminal) {
+              const who = stream === 'system' ? 'Interviewer audio' : 'Microphone'
+              this.events.toast({
+                level: 'error',
+                message: `${who} transcription stopped: ${detail ?? 'connection failed'}`,
+              })
+            }
+          },
         }
       )
       this.sttSessions.set(stream, session)
@@ -137,9 +154,12 @@ export class InterviewSession {
     ])
 
     this.setState('running')
+    // Tell the UI the starting listen indicator (e.g. "off" for manual, "always"
+    // for always-on) now that a fresh engine exists.
+    this.engine.notifyListenState()
     log.info(
       `session started — stt=${stt.name} llm=${llm.name}/${answerModel} ` +
-        `speculative=${config.speculative} mode=${config.mode}`
+        `speculative=${config.speculative} mode=${config.mode} listen=${config.listenMode}`
     )
     return { ok: true }
   }
@@ -151,6 +171,37 @@ export class InterviewSession {
 
   updateConfig(config: SessionConfig): void {
     this.engine?.updateConfig(config)
+  }
+
+  /** Push-to-listen control from the UI (hold button / arm shortcut). */
+  setListen(state: ListenState): void {
+    this.engine?.setListen(state)
+  }
+
+  /**
+   * Pick another configured LLM provider to fall back to, skipping the one that
+   * just failed. Order favours speed, then breadth. Returns null when nothing
+   * else is set up — the primary error then surfaces as before.
+   */
+  private resolveFallback(currentName: string): LlmChoice | null {
+    const status = credentialStatus()
+    const order: Array<{ name: string; has: boolean }> = [
+      { name: 'groq', has: status.groq },
+      { name: 'openrouter', has: status.openrouter },
+      { name: 'anthropic', has: status.anthropic },
+      { name: 'openai', has: status.openai },
+    ]
+    for (const { name, has } of order) {
+      if (name === currentName || !has) continue
+      try {
+        const provider = getLlmProvider(name)
+        provider.validate()
+        return { llm: provider, model: provider.defaultModel, name: provider.name }
+      } catch {
+        // Configured but unusable (e.g. a bad key) — try the next one.
+      }
+    }
+    return null
   }
 
   stop(): void {

@@ -23,6 +23,7 @@ import {
   type AnswerNudge,
   type AppSettings,
   type CandidateProfile,
+  type ListenState,
   type SessionConfig,
   type StreamId,
   type TurnTrace,
@@ -52,12 +53,14 @@ export function registerIpc(getWindow: () => BrowserWindow | null): InterviewSes
     answerDone: (payload) => push(PUSH.answerDone, payload),
     answerCancelled: (payload) => push(PUSH.answerCancelled, payload),
     answerError: (payload) => push(PUSH.answerError, payload),
+    listenState: (indicator) => push(PUSH.listenState, { indicator }),
     trace: (trace) => {
       traces.push(trace)
       push(PUSH.trace, trace)
     },
     streamStatus: (stream, status) => push(PUSH.streamStatus, { stream, status }),
     sessionState: (state, error) => push(PUSH.sessionState, { state, error }),
+    toast: (payload) => push(PUSH.toast, payload),
   })
 
   // --- Hot path -------------------------------------------------------------
@@ -65,6 +68,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): InterviewSes
   // this is ~12 messages/second per stream carrying 2560 bytes each.
   ipcMain.on(SEND.audioFrame, (_event, payload: { stream: StreamId; frame: ArrayBuffer }) => {
     session.routeFrame(payload.stream, payload.frame)
+  })
+
+  // Push-to-listen control. `on`, not `handle`: a held button toggles this many
+  // times and must feel instant; the engine pushes the resolved indicator back.
+  ipcMain.on(SEND.setListen, (_event, payload: { state: ListenState }) => {
+    session.setListen(payload.state)
   })
 
   // Input levels stay in the renderer: the meter is decoration, and round-

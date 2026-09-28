@@ -93,16 +93,21 @@ function recorder(): TurnEngineEvents & {
     answerDone: (p) => done.push(p.text),
     answerCancelled: (p) => cancelled.push({ questionId: p.questionId, reason: p.reason }),
     answerError: (p) => errors.push(p.message),
+    listenState: () => {},
     trace: () => {},
   }
 }
 
+// These tests exercise the always-answer engine behavior; push-to-listen gating
+// gets its own block below with `listenMode: 'manual'`.
 const CONFIG: SessionConfig = {
   mode: 'general',
   answerLength: 'normal',
   speculative: true,
   grounded: true,
   complexity: 'balanced',
+  listenMode: 'always',
+  providerFallback: true,
 }
 
 /**
@@ -429,6 +434,64 @@ describe('provider failures', () => {
     expect(events.errors.at(0)).toContain('exploded')
   })
 
+  it('falls back to another provider when the primary fails before any token', async () => {
+    const primary = new FailingLLM(false)
+    const fallback = new ScriptedLLM(['fallback ', 'answer'])
+    const events = recorder()
+    const toasts: string[] = []
+    const engine = new TurnEngine({
+      llm: primary,
+      answerModel: 'm',
+      summaryModel: 'm',
+      context: new ContextManager(),
+      config: CONFIG,
+      emit: { ...events, toast: (t) => toasts.push(t.message) },
+      resolveFallback: () => ({ llm: fallback, model: 'm2', name: 'fallback' }),
+    })
+
+    engine.handleTurn(turn('end', 'tell me about yourself'))
+    await settle(80)
+
+    expect(fallback.started).toBe(1)
+    expect(events.answerText()).toBe('fallback answer')
+    expect(events.errors).toHaveLength(0)
+    expect(toasts.some((m) => /switching to fallback/i.test(m))).toBe(true)
+  })
+
+  it('never falls back once a token has already shipped', async () => {
+    // Primary streams one token, then dies — switching now would restart the
+    // answer on screen, so the fallback must stay untouched.
+    const fallback = new ScriptedLLM(['should ', 'not ', 'run'])
+    const partialThenError: LLMProvider = {
+      name: 'partial',
+      defaultModel: 'm',
+      capabilities: { streaming: true, promptCaching: false, maxContextTokens: 100 },
+      validate: () => {},
+      prewarm: async () => {},
+      async *stream() {
+        yield { type: 'delta', text: 'partial ' }
+        yield { type: 'error', message: 'died mid-stream', retryable: true }
+      },
+    }
+    const events = recorder()
+    const engine = new TurnEngine({
+      llm: partialThenError,
+      answerModel: 'm',
+      summaryModel: 'm',
+      context: new ContextManager(),
+      config: CONFIG,
+      emit: events,
+      resolveFallback: () => ({ llm: fallback, model: 'm2', name: 'fallback' }),
+    })
+
+    engine.handleTurn(turn('end', 'tell me about yourself'))
+    await settle(80)
+
+    expect(fallback.started).toBe(0)
+    expect(events.answerText()).toBe('partial ')
+    expect(events.errors.at(0)).toContain('died mid-stream')
+  })
+
   it('surfaces a thrown provider error instead of hanging', async () => {
     const exploding: LLMProvider = {
       name: 'boom',
@@ -470,6 +533,109 @@ describe('manual control', () => {
     engine.askManual('   ')
     await settle(20)
     expect(llm.started).toBe(0)
+  })
+})
+
+describe('push-to-listen (manual mode)', () => {
+  const manual = (): {
+    engine: TurnEngine
+    events: ReturnType<typeof recorder>
+    llm: ScriptedLLM
+  } => {
+    const events = recorder()
+    const llm = new ScriptedLLM()
+    const engine = new TurnEngine({
+      llm,
+      answerModel: 'm',
+      summaryModel: 'm',
+      context: new ContextManager(),
+      config: { ...CONFIG, listenMode: 'manual' },
+      emit: events,
+    })
+    return { engine, events, llm }
+  }
+
+  it('does not answer while idle', async () => {
+    const { engine, llm } = manual()
+    engine.handleTurn(turn('eager-end', 'why did you choose mongodb for that'))
+    engine.handleTurn(turn('end', 'why did you choose mongodb for that project'))
+    await settle(80)
+    expect(llm.started).toBe(0)
+  })
+
+  it('still feeds conversation memory while idle', async () => {
+    const context = new ContextManager()
+    const events = recorder()
+    const engine = new TurnEngine({
+      llm: new ScriptedLLM(),
+      answerModel: 'm',
+      summaryModel: 'm',
+      context,
+      config: { ...CONFIG, listenMode: 'manual' },
+      emit: events,
+    })
+    engine.handleTurn(turn('end', 'what is your experience with kubernetes'))
+    await settle(40)
+    // The interviewer turn was recorded even though it produced no answer.
+    expect(context.turnCount).toBe(1)
+  })
+
+  it('answers the next question when armed, then disarms', async () => {
+    const { engine, llm } = manual()
+    engine.setListen('armed')
+
+    engine.handleTurn(turn('end', 'tell me about a hard bug you fixed'))
+    await settle(60)
+    expect(llm.started).toBe(1)
+
+    // Arm was one-shot: a second question is ignored until re-armed.
+    engine.handleTurn(turn('end', 'what is your favourite database'))
+    await settle(60)
+    expect(llm.started).toBe(1)
+  })
+
+  it('emits the resolved indicator as the arm is consumed', async () => {
+    const events = recorder()
+    const indicators: string[] = []
+    const llm = new ScriptedLLM()
+    const engine = new TurnEngine({
+      llm,
+      answerModel: 'm',
+      summaryModel: 'm',
+      context: new ContextManager(),
+      config: { ...CONFIG, listenMode: 'manual' },
+      emit: { ...events, listenState: (i) => indicators.push(i) },
+    })
+
+    engine.setListen('armed')
+    expect(indicators.at(-1)).toBe('armed')
+
+    engine.handleTurn(turn('end', 'explain the CAP theorem'))
+    await settle(60)
+    // Auto-disarmed back to off once the question was committed.
+    expect(indicators.at(-1)).toBe('off')
+  })
+
+  it('answers every question while holding', async () => {
+    const { engine, llm } = manual()
+    engine.setListen('holding')
+
+    engine.handleTurn(turn('end', 'what is a closure'))
+    await settle(60)
+    engine.handleTurn(turn('end', 'how does the event loop work'))
+    await settle(60)
+    expect(llm.started).toBe(2)
+  })
+
+  it('lets manual ask and regenerate work even when idle', async () => {
+    const { engine, llm } = manual()
+    engine.askManual('explain the CAP theorem')
+    await settle(60)
+    expect(llm.started).toBe(1)
+
+    engine.regenerate()
+    await settle(60)
+    expect(llm.started).toBe(2)
   })
 })
 

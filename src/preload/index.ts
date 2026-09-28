@@ -15,6 +15,7 @@ import type {
   AppSettings,
   CandidateProfile,
   CredentialStatus,
+  ListenState,
   SessionConfig,
   SessionState,
   StreamId,
@@ -34,6 +35,11 @@ const api = {
   },
   sendCaptureState(stream: StreamId, state: string, error?: string): void {
     ipcRenderer.send(SEND.captureState, { stream, state, error })
+  },
+  /** Push-to-listen: 'holding' while a hold button is down, 'armed' to catch the
+   *  next question, 'idle' to stop. `send` so the gesture never awaits a reply. */
+  setListen(state: ListenState): void {
+    ipcRenderer.send(SEND.setListen, { state })
   },
 
   // --- session -------------------------------------------------------------

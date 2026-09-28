@@ -38,7 +38,13 @@ export interface STTSessionCallbacks {
   onTurn: (event: TurnEvent) => void
   onStateChange: (
     state: 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'error',
-    detail?: string
+    detail?: string,
+    /**
+     * True when this error is final — the session has stopped trying to
+     * reconnect (auth failure, or too many failed attempts). The caller should
+     * surface it prominently rather than treat it as a passing blip.
+     */
+    terminal?: boolean
   ) => void
 }
 

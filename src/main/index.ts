@@ -12,11 +12,26 @@ import { primeRedaction } from '@main/config/credentials'
 import { getSettings, updateSettings } from '@main/config/settings'
 import { createOverlay, cycleOpacity, getOverlay, toggleVisibility } from '@main/windows/overlay'
 import { createTray, destroyTray, refreshMenu } from '@main/windows/tray'
-import { clearSensitiveState, pushShortcut, registerIpc } from '@main/ipc/handlers'
+import { clearSensitiveState, pushShortcut, pushToast, registerIpc } from '@main/ipc/handlers'
 import { disposeProviders } from '@main/providers/factory'
 import type { ShortcutAction } from '@shared/ipc'
 
 const log = createLogger('main')
+
+// Safety net. Most async paths are individually guarded, but an unforeseen throw
+// in the main process would otherwise crash the app with no explanation. Log it,
+// tell the user, and keep running rather than dying silently.
+process.on('uncaughtException', (err) => {
+  log.error('uncaught exception', err)
+  try {
+    pushToast(getOverlay(), { level: 'error', message: `Unexpected error: ${err.message}` })
+  } catch {
+    /* window may not exist yet */
+  }
+})
+process.on('unhandledRejection', (reason) => {
+  log.error('unhandled promise rejection', reason)
+})
 
 // A single instance owns the global shortcuts and the audio devices; a second
 // one would silently fight the first for both.
@@ -26,8 +41,9 @@ if (!app.requestSingleInstanceLock()) {
 
 app.setAppUserModelId('com.cue.interviewcopilot')
 
-// Chromium's built-in echo cancellation would treat the interviewer's voice as
-// echo to be removed. We want it verbatim, and we do our own channel routing.
+// Stop Chromium from hijacking the OS media keys (play/pause) while Cue runs —
+// it has no media of its own, and grabbing them would surprise the user mid-call.
+// (Echo cancellation is handled per-track in the renderer's capture graph, not here.)
 app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling')
 
 function setupMediaAccess(): void {
@@ -77,6 +93,8 @@ function setupMediaAccess(): void {
 function registerShortcuts(): void {
   const bindings: Array<[string, ShortcutAction | (() => void)]> = [
     ['CommandOrControl+Shift+Space', 'toggle-listening'],
+    // Arm push-to-listen for the next question without touching the mouse.
+    ['CommandOrControl+Shift+A', 'arm-listen'],
     [
       'CommandOrControl+Shift+H',
       () => {

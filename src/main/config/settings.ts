@@ -31,6 +31,8 @@ const uiSettings = z.object({
   opacity: z.number().min(0.25).max(1).default(1),
   showTranscript: z.boolean().default(true),
   showLatency: z.boolean().default(true),
+  theme: z.enum(['system', 'light', 'dark']).default('dark'),
+  accent: z.enum(['blue', 'violet', 'emerald', 'amber', 'rose']).default('blue'),
 })
 
 const sessionSettings = z.object({
@@ -44,6 +46,12 @@ const sessionSettings = z.object({
   // off for unconstrained answers.
   grounded: z.boolean().default(true),
   complexity: z.enum(['simple', 'balanced', 'advanced']).default('balanced'),
+  // Manual (push-to-listen) by default: the v1 always-on loop answered every
+  // interviewer utterance, including chit-chat and mis-heard audio. Manual mode
+  // hands the candidate a button so Cue only speaks when asked to.
+  listenMode: z.enum(['manual', 'always']).default('manual'),
+  // Fall back to another configured provider when a generation fails outright.
+  providerFallback: z.boolean().default(true),
 })
 
 // `prefault` (not `default`) so an absent section is replaced by `{}` *before*
